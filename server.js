@@ -3,19 +3,19 @@ import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import { GAME_CONFIG } from "./config.js";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const port = Number(process.env.PORT ?? 8080);
-
+const { combat, chat } = GAME_CONFIG;
 const world = {
-  gravity: 28,
-  halfSize: 58,
-  seaStartZ: 22,
-  tickRate: 30,
-  snapshotRate: 20,
+  ...GAME_CONFIG.world,
+  tickRate: GAME_CONFIG.tickRate,
+  snapshotRate: GAME_CONFIG.snapshotRate,
 };
 
 const players = new Map();
+const sockets = new Map();
+const chatHistory = [];
 let nextPlayerId = 1;
 let lastTick = performance.now();
 let lastSnapshot = 0;
@@ -56,10 +56,29 @@ const server = createServer(async (request, response) => {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (socket) => {
+  if (players.size >= GAME_CONFIG.maxPlayers) {
+    socket.send(JSON.stringify({ type: "error", message: "서버 정원이 가득 찼습니다." }));
+    socket.close();
+    return;
+  }
+
   const player = createPlayer();
   players.set(player.id, player);
+  sockets.set(socket, player.id);
 
-  socket.send(JSON.stringify({ type: "welcome", id: player.id, world }));
+  socket.send(
+    JSON.stringify({
+      type: "welcome",
+      id: player.id,
+      world,
+      chatHistory,
+      config: {
+        maxPlayers: GAME_CONFIG.maxPlayers,
+        chatMaxLength: chat.maxLength,
+      },
+    }),
+  );
+  broadcastChat("system", `${player.name} 접속`, "system");
 
   socket.on("message", (data) => {
     let message;
@@ -69,26 +88,45 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    if (message.type !== "input") return;
-    player.input.moveX = clampNumber(message.moveX, -1, 1);
-    player.input.moveZ = clampNumber(message.moveZ, -1, 1);
-    player.input.aimX = clampNumber(message.aimX, -world.halfSize, world.halfSize);
-    player.input.aimZ = clampNumber(message.aimZ, -world.halfSize, world.seaStartZ + 12);
-    player.input.jump ||= Boolean(message.jump);
-    player.input.attack ||= Boolean(message.attack);
+    if (message.type === "hello") {
+      const previousName = player.name;
+      player.name = sanitizeName(message.name, player.id);
+      if (player.name !== previousName) {
+        broadcastChat("system", `${previousName} -> ${player.name}`, "system");
+      }
+      return;
+    }
+
+    if (message.type === "chat") {
+      const text = sanitizeChat(message.text);
+      if (text) broadcastChat(player.id, text, "player");
+      return;
+    }
+
+    if (message.type === "input") {
+      player.input.moveX = clampNumber(message.moveX, -1, 1);
+      player.input.moveZ = clampNumber(message.moveZ, -1, 1);
+      player.input.aimX = clampNumber(message.aimX, -world.halfSize, world.halfSize);
+      player.input.aimZ = clampNumber(message.aimZ, -world.halfSize, world.seaStartZ + 12);
+      player.input.jump ||= Boolean(message.jump);
+      player.input.attack ||= Boolean(message.attack);
+    }
   });
 
   socket.on("close", () => {
     players.delete(player.id);
+    sockets.delete(socket);
+    broadcastChat("system", `${player.name} 퇴장`, "system");
   });
 
   socket.on("error", () => {
     players.delete(player.id);
+    sockets.delete(socket);
   });
 });
 
-server.listen(port, "0.0.0.0", () => {
-  console.log(`Box Bash Island server running on http://localhost:${port}`);
+server.listen(GAME_CONFIG.port, "0.0.0.0", () => {
+  console.log(`Box Bash Island server running on http://localhost:${GAME_CONFIG.port}`);
 });
 
 setInterval(gameTick, 1000 / world.tickRate);
@@ -108,11 +146,14 @@ function createPlayer() {
     directionZ: -1,
     rotationY: 0,
     hp: 100,
+    kills: 0,
+    deaths: 0,
     grounded: true,
     attackTimer: 0,
     attackCooldown: 0,
     hitLock: 0,
     respawnTimer: 0,
+    name: `Guest ${id.slice(1)}`,
     color: colorForId(nextPlayerId),
     input: {
       moveX: 0,
@@ -193,10 +234,10 @@ function updatePlayer(player, dt) {
 
 function startAttack(player) {
   if (player.attackCooldown > 0 || player.respawnTimer > 0) return;
-  player.attackTimer = 0.24;
-  player.attackCooldown = 0.72;
-  player.vx += player.directionX * 17;
-  player.vz += player.directionZ * 17;
+  player.attackTimer = combat.bashDuration;
+  player.attackCooldown = combat.bashCooldown;
+  player.vx += player.directionX * combat.bashImpulse;
+  player.vz += player.directionZ * combat.bashImpulse;
 }
 
 function integrate(player, dt) {
@@ -248,26 +289,38 @@ function solvePlayerCollisions() {
       b.x += nx * overlap * 0.5;
       b.z += nz * overlap * 0.5;
 
-      if (a.attackTimer > 0) damagePlayer(b, nx, nz);
-      if (b.attackTimer > 0) damagePlayer(a, -nx, -nz);
+      if (a.attackTimer > 0) damagePlayer(b, a, nx, nz);
+      if (b.attackTimer > 0) damagePlayer(a, b, -nx, -nz);
     }
   }
 }
 
-function damagePlayer(player, nx, nz) {
-  if (player.hitLock > 0 || player.respawnTimer > 0) return;
-  player.hp -= 20;
+function damagePlayer(player, attacker, nx, nz) {
+  if (player.hitLock > 0 || player.respawnTimer > 0 || attacker.id === player.id) return;
+  player.hp -= combat.bashDamage;
   player.hitLock = 0.55;
-  player.vx += nx * 12;
-  player.vz += nz * 12;
+  player.vx += nx * combat.knockback;
+  player.vz += nz * combat.knockback;
   player.vy = Math.max(player.vy, 4.8);
+  broadcastEvent({
+    type: "hit",
+    attackerId: attacker.id,
+    victimId: player.id,
+    x: round(player.x),
+    y: round(player.y),
+    z: round(player.z),
+    damage: combat.bashDamage,
+  });
 
   if (player.hp <= 0) {
     player.hp = 0;
+    player.deaths += 1;
+    attacker.kills += 1;
     player.vx = 0;
     player.vy = 0;
     player.vz = 0;
-    player.respawnTimer = 2;
+    player.respawnTimer = combat.respawnSeconds;
+    broadcastChat("system", `${attacker.name} defeated ${player.name}`, "system");
   }
 }
 
@@ -295,6 +348,9 @@ function broadcastSnapshot() {
       z: round(player.z),
       ry: round(player.rotationY),
       hp: player.hp,
+      name: player.name,
+      kills: player.kills,
+      deaths: player.deaths,
       state: stateForPlayer(player),
       color: player.color,
     })),
@@ -303,6 +359,44 @@ function broadcastSnapshot() {
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) client.send(payload);
   }
+}
+
+function broadcastChat(senderId, text, kind) {
+  const sender = players.get(senderId);
+  const message = {
+    type: "chat",
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    kind,
+    senderId,
+    name: sender?.name ?? "System",
+    text,
+    time: Date.now(),
+  };
+  chatHistory.push(message);
+  if (chatHistory.length > chat.historyLimit) chatHistory.shift();
+  broadcastEvent(message);
+}
+
+function broadcastEvent(event) {
+  const payload = JSON.stringify(event);
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN) client.send(payload);
+  }
+}
+
+function sanitizeName(value, fallbackId) {
+  const cleaned = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 18);
+  return cleaned || `Guest ${fallbackId.slice(1)}`;
+}
+
+function sanitizeChat(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, chat.maxLength);
 }
 
 function stateForPlayer(player) {

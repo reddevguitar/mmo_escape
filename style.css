@@ -34,7 +34,10 @@ body {
 
 .hud,
 .controls,
-.message {
+.message,
+.roster,
+.chat,
+.name-panel {
   position: fixed;
   z-index: 10;
   border: 1px solid rgb(255 255 255 / 16%);
@@ -123,6 +126,157 @@ body {
   line-height: 1.4;
 }
 
+.roster {
+  top: 90px;
+  right: 16px;
+  width: 210px;
+  max-width: calc(100vw - 32px);
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.roster h2 {
+  margin: 0 0 10px;
+  color: #dfeaec;
+  font-size: 12px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  color: #f4f7f8;
+  font-size: 12px;
+}
+
+.player-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.player-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-score {
+  color: #bfd0d4;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat {
+  left: 16px;
+  bottom: 70px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  height: 120px;
+  overflow: hidden;
+  color: #e7eff1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.chat-line {
+  min-height: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-line.system {
+  color: #f7c948;
+}
+
+.chat-line strong {
+  color: #fff;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr 58px;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.chat-form input,
+.name-panel input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 10%);
+  color: #fff;
+  padding: 0 10px;
+  font: inherit;
+  outline: none;
+}
+
+.chat-form button,
+.name-panel button {
+  height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: #f7c948;
+  color: #182022;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.name-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgb(9 13 14 / 45%);
+}
+
+.name-modal.hidden {
+  display: none;
+}
+
+.name-panel {
+  position: static;
+  width: min(380px, calc(100vw - 32px));
+  padding: 18px;
+  border-radius: 8px;
+}
+
+.name-panel h1 {
+  margin: 0 0 14px;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.name-panel label {
+  display: block;
+  margin-bottom: 8px;
+  color: #bfd0d4;
+  font-size: 13px;
+}
+
+.name-panel div {
+  display: grid;
+  grid-template-columns: 1fr 76px;
+  gap: 8px;
+}
+
 @media (max-width: 720px) {
   .hud {
     align-items: flex-start;
@@ -135,5 +289,17 @@ body {
 
   .message {
     display: none;
+  }
+
+  .roster {
+    display: none;
+  }
+
+  .chat {
+    bottom: 74px;
+  }
+
+  .chat-log {
+    height: 82px;
   }
 }

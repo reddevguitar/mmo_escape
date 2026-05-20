@@ -1,11 +1,12 @@
 {
   "name": "mmo-escape",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check game.js"
+    "dev": "PORT=8080 node server.js",
+    "check": "node --check config.js && node --check server.js && node --check game.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

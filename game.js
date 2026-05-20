@@ -6,6 +6,13 @@ const stateEl = document.querySelector("#state");
 const netEl = document.querySelector("#net");
 const countEl = document.querySelector("#count");
 const messageEl = document.querySelector("#message");
+const playerListEl = document.querySelector("#player-list");
+const chatLogEl = document.querySelector("#chat-log");
+const chatForm = document.querySelector("#chat-form");
+const chatInput = document.querySelector("#chat-input");
+const nameModal = document.querySelector("#name-modal");
+const nameForm = document.querySelector("#name-form");
+const nameInput = document.querySelector("#name-input");
 
 const world = {
   halfSize: 58,
@@ -32,6 +39,8 @@ const network = {
 };
 
 const playerViews = new Map();
+const effects = [];
+const chatMessages = [];
 const clock = new THREE.Clock();
 const scene = new THREE.Scene();
 const raycaster = new THREE.Raycaster();
@@ -80,6 +89,18 @@ const materials = {
     color: 0xfff0a8,
     transparent: true,
     opacity: 0.95,
+    side: THREE.DoubleSide,
+  }),
+  bash: new THREE.MeshBasicMaterial({
+    color: 0xfff0a8,
+    transparent: true,
+    opacity: 0.9,
+    side: THREE.DoubleSide,
+  }),
+  hit: new THREE.MeshBasicMaterial({
+    color: 0xff5a4f,
+    transparent: true,
+    opacity: 0.9,
     side: THREE.DoubleSide,
   }),
 };
@@ -182,6 +203,61 @@ function createCharacter(color, isLocal) {
   return group;
 }
 
+function createNameLabel(name, color) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.position.y = 4.25;
+  sprite.scale.set(4.2, 1.05, 1);
+  sprite.userData = { canvas, texture, name: "", color: "" };
+  updateNameLabel(sprite, name, color);
+  return sprite;
+}
+
+function updateNameLabel(sprite, name, color) {
+  if (sprite.userData.name === name && sprite.userData.color === color) return;
+
+  const { canvas, texture } = sprite.userData;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(12, 18, 20, 0.72)";
+  roundRect(ctx, 18, 10, 220, 42, 12);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(42, 32, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "700 22px system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(name, 58, 32, 160);
+  texture.needsUpdate = true;
+  sprite.userData.name = name;
+  sprite.userData.color = color;
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
 function ensurePlayerView(snapshot) {
   let view = playerViews.get(snapshot.id);
   const isLocal = snapshot.id === network.id;
@@ -189,22 +265,41 @@ function ensurePlayerView(snapshot) {
   if (!view) {
     view = {
       mesh: createCharacter(snapshot.color ?? "#e9f1f3", isLocal),
+      label: createNameLabel(snapshot.name ?? snapshot.id, snapshot.color ?? "#e9f1f3"),
       target: new THREE.Vector3(snapshot.x, snapshot.y, snapshot.z),
       hp: snapshot.hp,
       state: snapshot.state,
+      name: snapshot.name ?? snapshot.id,
+      kills: snapshot.kills ?? 0,
+      deaths: snapshot.deaths ?? 0,
+      color: snapshot.color ?? "#e9f1f3",
       lastSeen: performance.now(),
     };
+    view.mesh.add(view.label);
     view.mesh.position.copy(view.target);
     scene.add(view.mesh);
     playerViews.set(snapshot.id, view);
   }
 
+  if (snapshot.state === "bash" && view.state !== "bash") {
+    createBashEffect(view.mesh.position, snapshot.color ?? view.color);
+  }
+  if (snapshot.hp < view.hp) {
+    createHitEffect(view.mesh.position);
+  }
+
   view.target.set(snapshot.x, snapshot.y, snapshot.z);
   view.mesh.rotation.y = snapshot.ry;
+  view.name = snapshot.name ?? view.name;
+  view.kills = snapshot.kills ?? view.kills;
+  view.deaths = snapshot.deaths ?? view.deaths;
+  view.color = snapshot.color ?? view.color;
+  updateNameLabel(view.label, view.name, view.color);
   view.hp = snapshot.hp;
   view.state = snapshot.state;
   view.lastSeen = performance.now();
   view.mesh.visible = snapshot.state !== "respawn";
+  view.label.visible = snapshot.state !== "respawn";
   return view;
 }
 
@@ -223,6 +318,7 @@ function connect() {
     network.connected = true;
     network.connecting = false;
     network.offline = false;
+    sendHello();
     showMessage("서버 접속 완료. 다른 브라우저에서 같은 주소를 열면 같이 보입니다.");
   });
 
@@ -230,10 +326,24 @@ function connect() {
     const message = JSON.parse(event.data);
     if (message.type === "welcome") {
       network.id = message.id;
+      for (const chatMessage of message.chatHistory ?? []) addChatMessage(chatMessage);
       return;
     }
     if (message.type === "snapshot") {
       applySnapshot(message.players);
+      renderRoster(message.players);
+      return;
+    }
+    if (message.type === "chat") {
+      addChatMessage(message);
+      return;
+    }
+    if (message.type === "hit") {
+      createHitEffect(new THREE.Vector3(message.x, message.y, message.z));
+      return;
+    }
+    if (message.type === "error") {
+      showMessage(message.message);
     }
   });
 
@@ -282,10 +392,19 @@ function startOfflineMode(text) {
       z: 10,
       ry: 0,
       hp: 100,
+      name: "Offline",
+      kills: 0,
+      deaths: 0,
       state: "offline",
       color: "#e9f1f3",
     },
   ]);
+}
+
+function sendHello() {
+  if (!network.connected || network.socket.readyState !== WebSocket.OPEN) return;
+  const name = getNickname();
+  network.socket.send(JSON.stringify({ type: "hello", name }));
 }
 
 function updateOfflinePlayer(dt) {
@@ -329,6 +448,56 @@ function sendInput(now) {
   input.attackQueued = false;
 }
 
+function sendChat(text) {
+  const cleaned = text.trim();
+  if (!cleaned || !network.connected || network.socket.readyState !== WebSocket.OPEN) return;
+  network.socket.send(JSON.stringify({ type: "chat", text: cleaned }));
+}
+
+function addChatMessage(message) {
+  chatMessages.push(message);
+  while (chatMessages.length > 8) chatMessages.shift();
+  chatLogEl.replaceChildren(
+    ...chatMessages.map((item) => {
+      const line = document.createElement("div");
+      line.className = `chat-line ${item.kind === "system" ? "system" : ""}`;
+      if (item.kind === "system") {
+        line.textContent = item.text;
+      } else {
+        const name = document.createElement("strong");
+        name.textContent = `${item.name}: `;
+        line.append(name, document.createTextNode(item.text));
+      }
+      return line;
+    }),
+  );
+}
+
+function renderRoster(players) {
+  const sorted = [...players].sort((a, b) => b.kills - a.kills || a.name.localeCompare(b.name));
+  playerListEl.replaceChildren(
+    ...sorted.map((player) => {
+      const row = document.createElement("div");
+      row.className = "player-row";
+
+      const dot = document.createElement("span");
+      dot.className = "player-dot";
+      dot.style.background = player.color;
+
+      const name = document.createElement("span");
+      name.className = "player-name";
+      name.textContent = player.id === network.id ? `${player.name} (you)` : player.name;
+
+      const score = document.createElement("span");
+      score.className = "player-score";
+      score.textContent = `${player.kills}/${player.deaths}`;
+
+      row.append(dot, name, score);
+      return row;
+    }),
+  );
+}
+
 function updateInputVector() {
   let x = 0;
   let z = 0;
@@ -361,6 +530,41 @@ function updatePlayerViews(dt) {
   }
 }
 
+function createBashEffect(position, color) {
+  const material = materials.bash.clone();
+  material.color.set(color);
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.55, 32), material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(position.x, 0.08, position.z);
+  scene.add(mesh);
+  effects.push({ mesh, age: 0, duration: 0.34, startScale: 0.8, endScale: 2.4 });
+}
+
+function createHitEffect(position) {
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(0.65, 1.1, 28), materials.hit.clone());
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(position.x, 0.1, position.z);
+  scene.add(mesh);
+  effects.push({ mesh, age: 0, duration: 0.45, startScale: 0.7, endScale: 2.8 });
+}
+
+function updateEffects(dt) {
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const effect = effects[i];
+    effect.age += dt;
+    const t = Math.min(effect.age / effect.duration, 1);
+    const scale = THREE.MathUtils.lerp(effect.startScale, effect.endScale, t);
+    effect.mesh.scale.setScalar(scale);
+    effect.mesh.material.opacity = 1 - t;
+    if (t >= 1) {
+      scene.remove(effect.mesh);
+      effect.mesh.geometry.dispose();
+      effect.mesh.material.dispose();
+      effects.splice(i, 1);
+    }
+  }
+}
+
 function updateCamera(dt) {
   const local = playerViews.get(network.id) ?? playerViews.values().next().value;
   if (!local) return;
@@ -385,6 +589,10 @@ function updateWorldVisuals() {
   materials.aim.opacity = network.connected || network.offline ? 0.95 : 0.35;
 }
 
+function getNickname() {
+  return (localStorage.getItem("boxBashName") || nameInput.value || "Guest").trim().slice(0, 18);
+}
+
 function showMessage(text) {
   messageEl.textContent = text;
 }
@@ -404,6 +612,7 @@ function tick() {
   sendInput(now);
   if (network.offline) updateOfflinePlayer(dt);
   updatePlayerViews(dt);
+  updateEffects(dt);
   updateCamera(dt);
   updateWorldVisuals();
   updateHud();
@@ -414,6 +623,13 @@ function tick() {
 window.addEventListener("resize", resize);
 
 window.addEventListener("keydown", (event) => {
+  if (event.code === "Enter" && !isTextEntryActive()) {
+    chatInput.focus();
+    event.preventDefault();
+    return;
+  }
+  if (isTextEntryActive()) return;
+
   input.keys.add(event.code);
   if (event.code === "Space") {
     input.jumpQueued = true;
@@ -422,11 +638,12 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("keyup", (event) => {
+  if (isTextEntryActive()) return;
   input.keys.delete(event.code);
 });
 
 window.addEventListener("mousedown", (event) => {
-  if (event.button === 0) input.attackQueued = true;
+  if (event.button === 0 && event.target === canvas) input.attackQueued = true;
 });
 
 window.addEventListener("mousemove", (event) => {
@@ -434,7 +651,39 @@ window.addEventListener("mousemove", (event) => {
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
 });
 
+chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  sendChat(chatInput.value);
+  chatInput.value = "";
+  chatInput.blur();
+});
+
+chatInput.addEventListener("keydown", (event) => {
+  if (event.code === "Escape") {
+    chatInput.value = "";
+    chatInput.blur();
+  }
+});
+
+nameForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = nameInput.value.trim().slice(0, 18) || "Guest";
+  localStorage.setItem("boxBashName", name);
+  nameModal.classList.add("hidden");
+  sendHello();
+});
+
+function isTextEntryActive() {
+  return (
+    document.activeElement === chatInput ||
+    document.activeElement === nameInput ||
+    !nameModal.classList.contains("hidden")
+  );
+}
+
 createMap();
 resize();
+nameInput.value = localStorage.getItem("boxBashName") || `Player${Math.floor(Math.random() * 900 + 100)}`;
+nameInput.focus();
 connect();
 tick();
