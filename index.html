@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Box Bash Island</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="game">
+      <canvas id="scene" aria-label="Box Bash Island game scene"></canvas>
+
+      <section class="hud" aria-label="game status">
+        <div>
+          <strong>Box Bash Island</strong>
+          <span>1단계 로컬 프로토타입</span>
+        </div>
+        <div class="stats">
+          <span id="hp">HP 100</span>
+          <span id="state">READY</span>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="controls">
+        <span>WASD 이동</span>
+        <span>Space 점프</span>
+        <span>왼쪽 클릭 몸통 박치기</span>
+      </section>
+
+      <section id="message" class="message" aria-live="polite">
+        마우스로 방향을 잡고 왼쪽 클릭으로 몸통 박치기를 합니다.
+      </section>
+    </main>
+
+    <script type="module" src="./game.js"></script>
+  </body>
+</html>
