@@ -13,9 +13,11 @@
       <section class="hud" aria-label="game status">
         <div>
           <strong>Box Bash Island</strong>
-          <span>1단계 로컬 프로토타입</span>
+          <span>2단계 WebSocket 멀티플레이 프로토타입</span>
         </div>
         <div class="stats">
+          <span id="net">CONNECT</span>
+          <span id="count">0명</span>
           <span id="hp">HP 100</span>
           <span id="state">READY</span>
         </div>
@@ -28,7 +30,7 @@
       </section>
 
       <section id="message" class="message" aria-live="polite">
-        마우스로 방향을 잡고 왼쪽 클릭으로 몸통 박치기를 합니다.
+        서버에 접속 중입니다.
       </section>
     </main>
 
