@@ -25,6 +25,29 @@ export const CONTROLS = [
   ["Esc", "일시정지"],
 ];
 
+/**
+ * 되돌릴 수 없는 동작용 버튼: 첫 클릭은 경고만, 3초 안에 다시 누르면 실행.
+ * (브라우저 confirm 창은 임베드 환경에서 막힐 수 있어 페이지 안에서 확인한다)
+ */
+function twoStepButton(cls, label, armedLabel, action) {
+  let timer = null;
+  const btn = h("button", { class: cls, text: label });
+  btn.addEventListener("click", () => {
+    if (btn.classList.contains("armed")) {
+      clearTimeout(timer);
+      action();
+      return;
+    }
+    btn.classList.add("armed");
+    btn.textContent = armedLabel;
+    timer = setTimeout(() => {
+      btn.classList.remove("armed");
+      btn.textContent = label;
+    }, 3000);
+  });
+  return btn;
+}
+
 function controlsList() {
   return h("div", { class: "controls-list" }, CONTROLS.map(([k, v]) => h("div", {}, h("kbd", { text: k }), h("span", { text: v }))));
 }
@@ -42,13 +65,7 @@ export function titleScreen({ profile, onContinue, onNew }) {
         { class: "title-box" },
         h("div", { class: "save-info", text: `${profile.name} · Lv.${playerLevel(profile)} · ${formatMoney(profile.money)} · 출격 ${profile.stats.raids}회` }),
         h("button", { class: "big-btn", text: "이어하기", onclick: () => onContinue() }),
-        h("button", {
-          class: "ghost-btn",
-          text: "새로 시작 (저장 삭제)",
-          onclick: () => {
-            if (confirm("정말로 모든 진행 상황을 지우고 새로 시작할까요?")) onNew(nameInput.value);
-          },
-        }),
+        twoStepButton("ghost-btn danger", "새로 시작 (저장 삭제)", "한 번 더 누르면 모든 진행이 지워집니다", () => onNew(nameInput.value)),
         h("label", { class: "rename" }, "새로 시작할 때 이름: ", nameInput),
       )
     : h(
@@ -241,13 +258,7 @@ export function pauseModal({ profile, onResume, onAbandon, onVolume, onToggleNum
       h(
         "div",
         { class: "modal-buttons" },
-        h("button", {
-          class: "ghost-btn danger",
-          text: "레이드 포기 (실종 처리)",
-          onclick: () => {
-            if (confirm("레이드를 포기하면 가져간 장비를 모두 잃습니다. 계속할까요?")) onAbandon();
-          },
-        }),
+        twoStepButton("ghost-btn danger", "레이드 포기 (실종 처리)", "한 번 더 누르면 장비를 모두 잃고 포기합니다", onAbandon),
         h("button", { class: "big-btn", text: "계속하기", onclick: onResume }),
       ),
     ),

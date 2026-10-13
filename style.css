@@ -1964,3 +1964,9 @@ body[data-state="raid"] #screen {
   color: var(--muted);
   opacity: 1;
 }
+
+.ghost-btn.armed {
+  border-color: var(--bad);
+  background: rgba(255, 107, 94, 0.18);
+  color: #fff;
+}
