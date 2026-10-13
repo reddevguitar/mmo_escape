@@ -1,12 +1,15 @@
 {
   "name": "mmo-escape",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
+  "description": "DUCKSCAPE — 오리들의 탑다운 익스트랙션 슈터 (웹)",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "PORT=8080 node server.js",
-    "check": "node --check config.js && node --check server.js && node --check game.js"
+    "test": "node --test \"test/*.test.js\"",
+    "check": "node scripts/check.mjs",
+    "legacy": "node legacy/box-bash/server.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
