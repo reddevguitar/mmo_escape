@@ -1958,3 +1958,9 @@ body[data-state="raid"] #screen {
 .hud.map-open .hud-bc {
   display: none;
 }
+
+.claim-btn:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  opacity: 1;
+}
