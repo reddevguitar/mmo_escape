@@ -393,7 +393,7 @@ export class InventoryUI {
     }
     if (result.ok) {
       audio.pickup();
-      this.ctx.afterMove?.(item, from, t);
+      this.ctx.afterMove?.(item, from, t, result);
     } else if (result.msg) {
       this.ctx.toast?.(result.msg);
     }

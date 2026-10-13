@@ -117,3 +117,23 @@ for (const id of Object.keys(MAPS)) {
     }
   });
 }
+
+test("재장전 중 다른 총으로 바꾸면 장전이 취소된다", () => {
+  const profile = newProfile();
+  profile.equip.primary = makeItem("ak47", 1, { mag: 0, ammoId: "762" });
+  profile.equip.backpack.data.grid.items = [];
+  const ammo = makeItem("762", 60);
+  profile.equip.backpack.data.grid.items.push(ammo);
+  const raid = new Raid(profile, "farm", { seed: 3 });
+  raid.enemies = [];
+  const idle = { moveX: 0, moveY: 0, aimX: raid.player.x + 50, aimY: raid.player.y, quick: [] };
+  raid.update(1 / 60, { ...idle, reloadPressed: true });
+  assert.ok(raid.player.reload, "장전 시작");
+  // 인벤토리에서 주무기 슬롯에 권총을 넣는다 (기존 AK는 창고로 간 셈)
+  const pistol = makeItem("p9", 1, { mag: 3, ammoId: "9mm" });
+  profile.equip.primary = pistol;
+  for (let i = 0; i < 60 * 4; i++) raid.update(1 / 60, idle);
+  assert.equal(pistol.data.ammoId, "9mm");
+  assert.equal(pistol.data.mag, 3);
+  assert.equal(ammo.count, 60, "7.62 탄은 소모되지 않음");
+});

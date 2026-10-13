@@ -152,3 +152,41 @@ test("무게: 장전된 탄과 가방 내용물 포함", () => {
   assert.ok(itemWeight(bag) >= 3.4);
   assert.equal(makeStacks("9mm", 130).length, 3);
 });
+
+test("장비 교체 시 밀려난 아이템을 반환한다", () => {
+  const loot = makeGrid(6, 6);
+  loot.seen = new Set();
+  const newBag = makeItem("bag_scav");
+  addItem(loot, newBag);
+  loot.seen.add(newBag.uid);
+  const equip = { primary: null, secondary: null, helmet: null, armor: null, backpack: makeItem("bag_sling") };
+  const old = equip.backpack;
+  const r = moveItem(newBag, { type: "grid", grid: loot }, { type: "slot", equip, slot: "backpack" });
+  assert.ok(r.ok);
+  assert.equal(r.displaced, old);
+  assert.ok(loot.items.includes(old));
+});
+
+test("수색 전(미확인) 스택에는 합치지 않는다", () => {
+  const loot = makeGrid(4, 4);
+  loot.seen = new Set();
+  const hidden = makeItem("9mm", 10);
+  addItem(loot, hidden);
+  const mine = makeItem("9mm", 30);
+  assert.ok(addItem(loot, mine));
+  assert.equal(hidden.count, 10, "숨은 스택은 그대로");
+  assert.equal(loot.items.length, 2);
+  loot.seen.add(hidden.uid);
+  assert.ok(addItem(loot, makeItem("9mm", 5)));
+  assert.equal(hidden.count + mine.count, 45);
+});
+
+test("루팅 그리드에서 나눈 조각은 확인된 상태", () => {
+  const loot = makeGrid(4, 4);
+  loot.seen = new Set();
+  const ammo = makeItem("762", 40);
+  addItem(loot, ammo);
+  loot.seen.add(ammo.uid);
+  const piece = splitStack(loot, ammo);
+  assert.ok(piece && loot.seen.has(piece.uid));
+});

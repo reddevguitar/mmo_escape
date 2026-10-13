@@ -125,6 +125,7 @@ export function stackInto(grid, item) {
   if (def.stack <= 1) return item.count;
   for (const other of grid.items) {
     if (other === item || other.id !== item.id || other.count >= def.stack) continue;
+    if (grid.seen && !grid.seen.has(other.uid)) continue; // 아직 수색 안 된 스택
     const move = Math.min(def.stack - other.count, item.count);
     other.count += move;
     item.count -= move;
@@ -241,7 +242,7 @@ export function moveItem(item, from, to) {
     if (from.type === "slot") {
       if (slotAccepts(from.slot, existing)) {
         from.equip[from.slot] = existing;
-        return ok;
+        return { ok: true, displaced: existing };
       }
     } else if (from.type === "grid" && fitsRules(from.grid, existing)) {
       const tries = [
@@ -251,13 +252,13 @@ export function moveItem(item, from, to) {
       for (const [x, y, rot] of tries) {
         if (canPlace(from.grid, existing, x, y, rot)) {
           placeAt(from.grid, existing, x, y, rot);
-          return ok;
+          return { ok: true, displaced: existing };
         }
       }
       const spot = findSpot(from.grid, existing);
       if (spot) {
         placeAt(from.grid, existing, spot.x, spot.y, spot.rot);
-        return ok;
+        return { ok: true, displaced: existing };
       }
     }
     to.equip[to.slot] = existing;
@@ -268,16 +269,17 @@ export function moveItem(item, from, to) {
   return fail("이동할 수 없습니다");
 }
 
-/** 스택 나누기: 절반을 같은 그리드의 빈 자리에 새 스택으로 */
+/** 스택 나누기: 절반을 같은 그리드의 빈 자리에 새 스택으로. 새 조각을 반환 (실패 시 null) */
 export function splitStack(grid, item) {
-  if (item.count < 2) return false;
+  if (item.count < 2) return null;
   const half = Math.floor(item.count / 2);
   const piece = makeItem(item.id, half);
   const spot = findSpot(grid, piece);
-  if (!spot) return false;
+  if (!spot) return null;
   item.count -= half;
   placeAt(grid, piece, spot.x, spot.y, spot.rot);
-  return true;
+  grid.seen?.add(piece.uid);
+  return piece;
 }
 
 /** 큰 아이템부터 다시 채워 넣어 정리. 실패하면 원상복구 */

@@ -484,7 +484,7 @@ export class Raid {
     const def = ITEMS[w.id];
     if (actor.kind === "enemy") {
       if (w.data.mag >= def.mag) return false;
-      actor.reload = { t: 0, dur: def.reloadType === "single" ? def.reload * Math.min(def.mag, 4) : def.reload * 1.1, ammoId: w.data.ammoId };
+      actor.reload = { t: 0, dur: def.reloadType === "single" ? def.reload * Math.min(def.mag, 4) : def.reload * 1.1, ammoId: w.data.ammoId, weapon: w };
       return true;
     }
     const ammoId = this.findReloadAmmo(w);
@@ -494,7 +494,7 @@ export class Raid {
     }
     if (w.data.mag >= def.mag && w.data.ammoId === ammoId) return false;
     actor.using = null;
-    actor.reload = { t: 0, dur: def.reload, ammoId, single: def.reloadType === "single" };
+    actor.reload = { t: 0, dur: def.reload, ammoId, single: def.reloadType === "single", weapon: w };
     audio.reload(0);
     this.noise(actor.x, actor.y, 140, 0.2, actor);
     return true;
@@ -503,7 +503,8 @@ export class Raid {
   updateReload(actor, dt) {
     const r = actor.reload;
     const w = this.currentWeapon(actor);
-    if (!w) {
+    // 장전 도중 손에 든 총이 바뀌었으면(인벤토리에서 교체 등) 취소
+    if (!w || w !== r.weapon) {
       actor.reload = null;
       return;
     }

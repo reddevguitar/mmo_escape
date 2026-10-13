@@ -3,7 +3,7 @@
 import { ITEMS } from "../data/items.js";
 import { h } from "../core/dom.js";
 import { formatTime, formatWeight, clamp } from "../core/util.js";
-import { addItem, removeItem, unloadWeapon, splitStack, SLOT_TYPES, slotAccepts, countItem } from "../systems/inventory.js";
+import { addItem, removeItem, placeAt, unloadWeapon, splitStack, SLOT_TYPES, slotAccepts, countItem } from "../systems/inventory.js";
 import { InventoryUI, hideTooltip, hideMenu } from "./invui.js";
 import { itemIcon } from "./icons.js";
 import { detach, transfer } from "./hideout.js";
@@ -30,8 +30,10 @@ export class RaidUI {
         detach(item, from);
         raid.dropToGround(item);
       },
-      afterMove: (item, from, t) => {
+      afterMove: (item, from, t, result) => {
         if (t.grid?.seen) t.grid.seen.add(item.uid);
+        // 장비 교체로 원래 자리(상자)로 밀려난 아이템은 이미 아는 물건
+        if (result?.displaced && from.grid?.seen) from.grid.seen.add(result.displaced.uid);
       },
       toast: (msg) => this.app.toast(msg, "warn"),
       changed: () => {
@@ -308,12 +310,20 @@ export class RaidUI {
           const slots = Object.keys(SLOT_TYPES).filter((s) => slotAccepts(s, item));
           const slot = slots.find((s) => !p.equip[s]) ?? slots[0];
           const old = p.equip[slot];
+          const orig = { x: item.x, y: item.y, rot: item.rot };
           removeItem(from.grid, item);
           p.equip[slot] = item;
-          if (old) {
-            if (!addItem(from.grid, old)) raid.dropToGround(old);
-            else if (from.grid.seen) from.grid.seen.add(old.uid);
+          if (!old) return;
+          const targets = [from.grid, p.equip.backpack?.data.grid, p.pockets, raid.lootTarget?.grid].filter(Boolean);
+          const dest = targets.find((g) => addItem(g, old));
+          if (dest) {
+            dest.seen?.add(old.uid);
+            return;
           }
+          // 둘 곳이 없으면 원상복구
+          p.equip[slot] = old;
+          placeAt(from.grid, item, orig.x, orig.y, orig.rot);
+          this.app.toast("교체할 공간이 부족합니다", "warn");
         },
       });
     }
