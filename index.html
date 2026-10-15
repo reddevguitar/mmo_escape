@@ -3,62 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Box Bash Island</title>
+    <title>DUCKSCAPE — 오리들의 탈출</title>
+    <meta name="description" content="오리들이 총을 들고 파밍하고 탈출하는 탑다운 익스트랙션 슈터 웹게임" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦆</text></svg>" />
     <link rel="stylesheet" href="./style.css" />
   </head>
-  <body>
-    <main id="game">
-      <canvas id="scene" aria-label="Box Bash Island game scene"></canvas>
-
-      <section class="hud" aria-label="game status">
-        <div>
-          <strong>Box Bash Island</strong>
-          <span>3단계 소셜/전투 피드백 프로토타입</span>
-        </div>
-        <div class="stats">
-          <span id="net">CONNECT</span>
-          <span id="count">0명</span>
-          <span id="hp">HP 100</span>
-          <span id="state">READY</span>
-        </div>
-      </section>
-
-      <section class="controls" aria-label="controls">
-        <span>WASD 이동</span>
-        <span>Space 점프</span>
-        <span>왼쪽 클릭 몸통 박치기</span>
-        <span>Enter 채팅</span>
-      </section>
-
-      <section class="roster" aria-label="players">
-        <h2>Players</h2>
-        <div id="player-list"></div>
-      </section>
-
-      <section class="chat" aria-label="chat">
-        <div id="chat-log" class="chat-log" aria-live="polite"></div>
-        <form id="chat-form" class="chat-form">
-          <input id="chat-input" maxlength="140" autocomplete="off" placeholder="Enter로 채팅" />
-          <button type="submit">Send</button>
-        </form>
-      </section>
-
-      <section id="message" class="message" aria-live="polite">
-        서버에 접속 중입니다.
-      </section>
-
-      <section id="name-modal" class="name-modal" aria-label="nickname setup">
-        <form id="name-form" class="name-panel">
-          <h1>Box Bash Island</h1>
-          <label for="name-input">닉네임</label>
-          <div>
-            <input id="name-input" maxlength="18" autocomplete="nickname" />
-            <button type="submit">Join</button>
-          </div>
-        </form>
-      </section>
-    </main>
-
-    <script type="module" src="./game.js"></script>
+  <body data-state="title">
+    <canvas id="game" aria-label="레이드 화면"></canvas>
+    <div id="screen"></div>
+    <div id="modal"></div>
+    <div id="toasts" aria-live="polite"></div>
+    <noscript>이 게임은 JavaScript가 필요합니다.</noscript>
+    <script type="module" src="./src/main.js"></script>
   </body>
 </html>
