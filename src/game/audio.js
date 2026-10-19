@@ -13,7 +13,7 @@ class AudioEngine {
   /** 사용자 입력 이후에 호출해야 소리가 납니다 */
   init() {
     if (this.ctx) {
-      if (this.ctx.state === "suspended") this.ctx.resume();
+      if (this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
       return;
     }
     const Ctx = globalThis.AudioContext ?? globalThis.webkitAudioContext;
@@ -30,6 +30,15 @@ class AudioEngine {
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    // iOS 사파리: 터치 이벤트 안에서 무음 버퍼를 한 번 재생해야 소리가 풀린다
+    try {
+      const silent = this.ctx.createBufferSource();
+      silent.buffer = this.ctx.createBuffer(1, 1, 22050);
+      silent.connect(this.ctx.destination);
+      silent.start(0);
+    } catch {
+      // 무시
+    }
   }
 
   setVolume(v) {
@@ -222,6 +231,66 @@ class AudioEngine {
     filter.connect(out);
     this.tone(filter, { dur: 0.42, type: "square", freq: 330, freqEnd: 260, gain: 0.8, attack: 0.02 });
     this.tone(filter, { start: 0.45, dur: 0.3, type: "square", freq: 300, freqEnd: 240, gain: 0.7, attack: 0.02 });
+  }
+
+  /** 고양이 울음: 올라갔다 내려오는 음 */
+  meow(distance = 0, pan = 0) {
+    if (!this.ready || !this.throttle("meow", 250)) return;
+    const vol = 0.4 * (1 - Math.min(1, distance / 900));
+    if (vol < 0.03) return;
+    const out = this.out(vol, pan);
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.exponentialRampToValueAtTime(880, t + 0.12);
+    osc.frequency.exponentialRampToValueAtTime(480, t + 0.42);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 1400;
+    filter.Q.value = 1.5;
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.9, t + 0.05);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    osc.connect(filter);
+    filter.connect(env);
+    env.connect(out);
+    osc.start(t);
+    osc.stop(t + 0.5);
+  }
+
+  /** 하악! (경계하는 고양이) */
+  hiss(distance = 0, pan = 0) {
+    if (!this.ready || !this.throttle("hiss", 300)) return;
+    const vol = 0.5 * (1 - Math.min(1, distance / 900));
+    if (vol < 0.03) return;
+    const out = this.out(vol, pan);
+    this.noise(out, { dur: 0.45, type: "highpass", freq: 2800, gain: 0.9, attack: 0.03 });
+    this.noise(out, { dur: 0.3, type: "bandpass", freq: 5200, q: 2, gain: 0.5, attack: 0.02 });
+  }
+
+  scratch(distance = 0, pan = 0) {
+    if (!this.ready || !this.throttle("scratch", 80)) return;
+    const vol = 0.45 * (1 - Math.min(1, distance / 700));
+    if (vol < 0.03) return;
+    const out = this.out(vol, pan);
+    for (let i = 0; i < 3; i++) this.noise(out, { start: i * 0.04, dur: 0.05, type: "bandpass", freq: 3000 + i * 600, q: 3, gain: 0.8 });
+  }
+
+  /** 잠긴 문 덜컹 */
+  locked() {
+    if (!this.ready || !this.throttle("locked", 200)) return;
+    const out = this.out(0.4, 0);
+    this.noise(out, { dur: 0.08, type: "bandpass", freq: 700, q: 4, gain: 0.9 });
+    this.noise(out, { start: 0.1, dur: 0.08, type: "bandpass", freq: 650, q: 4, gain: 0.7 });
+  }
+
+  unlock() {
+    if (!this.ready) return;
+    const out = this.out(0.4, 0);
+    this.noise(out, { dur: 0.05, type: "highpass", freq: 3500, gain: 0.8 });
+    this.tone(out, { start: 0.06, dur: 0.12, type: "triangle", freq: 1400, freqEnd: 1900, gain: 0.4 });
   }
 
   pickup() {

@@ -1,6 +1,6 @@
 {
   "name": "mmo-escape",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "DUCKSCAPE — 오리들의 탑다운 익스트랙션 슈터 (웹)",
   "type": "module",

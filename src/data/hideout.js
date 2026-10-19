@@ -34,4 +34,15 @@ export const UPGRADES = {
   },
 };
 
-export const UPGRADE_ORDER = ["stash", "secure", "gym"];
+UPGRADES.bench = {
+  name: "작업대",
+  icon: "🛠️",
+  desc: "재료로 탄약·의료품·장비를 만든다. 레벨이 오르면 만들 수 있는 것이 늘어난다.",
+  levels: [
+    { label: "기본 작업대", bench: 1 },
+    { label: "개량 작업대", bench: 2, cost: 55000, items: [["toolbox", 1], ["wires", 2]] },
+    { label: "정밀 작업대", bench: 3, cost: 160000, items: [["fuel", 1], ["chem", 2], ["battery", 2]] },
+  ],
+};
+
+export const UPGRADE_ORDER = ["stash", "secure", "gym", "bench"];

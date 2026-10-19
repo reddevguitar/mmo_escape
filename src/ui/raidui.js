@@ -1,6 +1,6 @@
 // 레이드 HUD와 레이드 중 인벤토리(Tab)
 
-import { ITEMS } from "../data/items.js";
+import { ITEMS, sellPrice } from "../data/items.js";
 import { h } from "../core/dom.js";
 import { formatTime, formatWeight, clamp } from "../core/util.js";
 import { addItem, removeItem, placeAt, unloadWeapon, splitStack, SLOT_TYPES, slotAccepts, countItem } from "../systems/inventory.js";
@@ -24,6 +24,7 @@ export class RaidUI {
       isHidden: (item, grid) => !!grid.seen && !grid.seen.has(item.uid),
       searching: (grid) => (grid.owner && grid.owner === raid.lootTarget ? raid.nextHidden(grid.owner) : null),
       quickMove: (item, from) => this.quickMove(item, from),
+      quickLabel: (item, from) => (from.type === "grid" && from.grid.seen ? "챙기기" : raid.lootTarget ? "상자에 넣기" : null),
       menuItems: (item, from) => this.menuItems(item, from),
       canDropZone: (zone) => zone === "ground",
       onDropZone: (zone, item, from) => {
@@ -47,12 +48,17 @@ export class RaidUI {
     return this.app.profile;
   }
 
+  /** 이번 레이드에 들고 온 장비 묶음 (일반 출격이면 프로필 장비, 떠돌이면 지급 장비) */
+  get gear() {
+    return this.raid.loadout;
+  }
+
   // ── HUD ────────────────────────────────────────────
 
   buildHud() {
     const el = h("div", { class: "hud" });
     const timer = h("div", { class: "raid-timer" });
-    const mapName = h("div", { class: "raid-map", text: this.raid.def.name });
+    const mapName = h("div", { class: "raid-map" }, this.raid.def.name, this.raid.scavMode ? h("span", { class: "scav-tag", text: "떠돌이" }) : null);
     const feed = h("div", { class: "feed" });
     const extracts = h("div", { class: "extract-list" });
     const hpFill = h("i");
@@ -66,6 +72,20 @@ export class RaidUI {
     const weaponSub = h("div", { class: "w-sub" });
     const quick = h("div", { class: "quickslots" });
     const prompt = h("div", { class: "prompt hidden" });
+    // 퀵슬롯과 상호작용 안내는 눌러서도 쓸 수 있다 (터치). HUD는 0.1초마다 다시 그리므로 컨테이너에서 받는다
+    quick.addEventListener("pointerdown", (e) => {
+      const slot = e.target.closest?.(".qs");
+      if (!slot) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const i = Number(slot.dataset.i);
+      this.app.uiPresses.add(i === 4 ? "grenade" : `quick${i}`);
+    });
+    prompt.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.app.uiPresses.add("interact");
+    });
     const extractBox = h("div", { class: "extract-count hidden" });
     el.append(
       h("div", { class: "hud-tl" }, mapName, timer, feed),
@@ -127,26 +147,26 @@ export class RaidUI {
     } else {
       hud.weaponName.textContent = "맨손 (부리 쪼기)";
       hud.ammo.textContent = "—";
-      hud.weaponSub.textContent = "왼쪽 클릭으로 쪼기";
+      hud.weaponSub.textContent = this.app.touch ? "조준 스틱을 끝까지 밀어 쪼기" : "왼쪽 클릭으로 쪼기";
     }
-    const frags = countItem([this.profile.pockets, this.profile.equip.backpack?.data.grid, this.profile.secure].filter(Boolean), "frag");
+    const frags = countItem(raid.carried(), "frag");
 
     // 퀵슬롯
     const slots = [];
     for (let i = 0; i < 4; i++) {
-      const item = this.profile.pockets.items.find((it) => it.x === i);
+      const item = this.gear.pockets.items.find((it) => it.x === i);
       const using = p.using && p.using.item === item;
       slots.push(
         h(
           "div",
-          { class: `qs ${using ? "using" : ""}` },
+          { class: `qs ${using ? "using" : ""} ${item ? "" : "empty"}`, dataset: { i: String(i) } },
           h("span", { class: "qk", text: String(i + 3) }),
           item ? h("img", { src: itemIcon(item.id) }) : null,
           item && item.count > 1 ? h("span", { class: "qc", text: String(item.count) }) : null,
         ),
       );
     }
-    slots.push(h("div", { class: "qs" }, h("span", { class: "qk", text: "G" }), h("span", { class: "qe", text: "💣" }), h("span", { class: "qc", text: String(frags) })));
+    slots.push(h("div", { class: `qs ${frags ? "" : "empty"}`, dataset: { i: "4" } }, h("span", { class: "qk", text: "G" }), h("span", { class: "qe", text: "💣" }), h("span", { class: "qc", text: String(frags) })));
     hud.quick.replaceChildren(...slots);
 
     // 탈출 목록
@@ -171,9 +191,15 @@ export class RaidUI {
     const it = raid.interaction;
     if (it && p.alive && !this.invOpen) {
       let label = "";
-      if (it.type === "door") label = it.open ? "문 닫기" : "문 열기";
+      let usable = true;
+      if (it.type === "door" && it.locked) {
+        const key = Object.values(ITEMS).find((d) => d.type === "key" && d.lock === raid.def.lock);
+        usable = it.hasKey;
+        label = it.hasKey ? `🔑 잠긴 문 열기 (${key?.name ?? "열쇠"} 사용)` : `🔒 잠긴 문 — ${key?.name ?? "열쇠"} 필요`;
+      } else if (it.type === "door") label = it.open ? "문 닫기" : "문 열기";
       else label = `${it.target.name} ${it.target.opened ? "열기" : "수색"}`;
-      hud.prompt.replaceChildren(h("kbd", { text: "F" }), label);
+      hud.prompt.replaceChildren(h("kbd", { text: this.app.touch ? "✋" : "F" }), label);
+      hud.prompt.classList.toggle("locked", !usable);
       hud.prompt.classList.remove("hidden");
     } else {
       hud.prompt.classList.add("hidden");
@@ -192,6 +218,7 @@ export class RaidUI {
   toggleInventory(force) {
     const open = force ?? !this.invOpen;
     this.invOpen = open;
+    this.app.touchControls?.reset();
     this.invLayer.classList.toggle("hidden", !open);
     if (!open) {
       hideTooltip();
@@ -202,11 +229,23 @@ export class RaidUI {
     this.raid.invDirty = true;
   }
 
+  /** 화면 크기에 맞춘 칸 크기: 작은 화면에서도 내 장비와 상자가 나란히 들어가게 */
+  cellSize() {
+    const w = globalThis.innerWidth || 1280;
+    const hh = globalThis.innerHeight || 800;
+    if (w >= 1000 && hh >= 680) return 42;
+    // 가로가 넓으면 두 패널이 나란히(패널당 약 10칸), 좁으면 한 패널이 화면 폭(약 10칸)
+    const byW = w >= 640 ? (w - 70) / 2 / 10.5 : (w - 30) / 10.5;
+    const byH = w >= 640 ? (hh - 40) / 11 : 99;
+    return Math.max(26, Math.min(42, Math.floor(Math.min(byW, byH))));
+  }
+
   renderInventory() {
     if (!this.invOpen) return;
+    this.inv.cell = this.cellSize();
     const raid = this.raid;
-    const p = this.profile;
-    const eq = p.equip;
+    const g = this.gear;
+    const eq = g.equip;
     const player = raid.player;
     const left = h(
       "section",
@@ -222,8 +261,10 @@ export class RaidUI {
       h(
         "div",
         { class: "sub-grids" },
-        h("div", { class: "sub" }, h("h4", { text: "주머니 · 3~6" }), this.inv.gridView(p.pockets, { quickKeys: true })),
-        h("div", { class: "sub" }, h("h4", { text: "🔒 보안 컨테이너" }), this.inv.gridView(p.secure, { class: "secure" })),
+        h("div", { class: "sub" }, h("h4", { text: "주머니 · 3~6" }), this.inv.gridView(g.pockets, { quickKeys: true })),
+        g.secure
+          ? h("div", { class: "sub" }, h("h4", { text: "🔒 보안 컨테이너" }), this.inv.gridView(g.secure, { class: "secure" }))
+          : h("div", { class: "sub" }, h("h4", { text: "🔒 보안 컨테이너" }), h("p", { class: "hint", text: "떠돌이는 보안 컨테이너가 없습니다" })),
       ),
       h("div", { class: "sub" }, h("h4", { text: eq.backpack ? `🎒 ${ITEMS[eq.backpack.id].name}` : "가방 없음" }), eq.backpack ? this.inv.gridView(eq.backpack.data.grid) : null),
     );
@@ -232,12 +273,14 @@ export class RaidUI {
     let right;
     if (c) {
       const hidden = c.grid.items.filter((it) => !c.grid.seen.has(it.uid)).length;
+      const visible = c.grid.items.length - hidden;
       right = h(
         "section",
         { class: "panel inv-right" },
         h("div", { class: "panel-title" }, h("span", { text: c.name }), h("small", { text: hidden > 0 ? `수색 중… (${hidden}개 남음)` : c.grid.items.length ? "수색 완료" : "비어 있음" })),
-        h("p", { class: "hint", text: "Shift+클릭: 내 가방으로 · 드래그 중 R: 회전 · 수색은 인벤토리를 연 동안 진행됩니다" }),
+        h("p", { class: "hint", text: this.app.touch ? "길게 눌러 끌기 · 탭: 메뉴 · 수색은 인벤토리를 연 동안 진행됩니다" : "Shift+클릭: 내 가방으로 · 드래그 중 R: 회전 · 수색은 인벤토리를 연 동안 진행됩니다" }),
         this.inv.gridView(c.grid),
+        visible > 0 ? h("button", { class: "take-all", text: `모두 가져가기 (${visible})`, onclick: () => this.takeAll(c) }) : null,
         this.inv.zoneView("ground", "여기에 놓으면 바닥에 버립니다", "ground-zone"),
       );
     } else {
@@ -245,16 +288,47 @@ export class RaidUI {
         "section",
         { class: "panel inv-right" },
         h("div", { class: "panel-title" }, h("span", { text: "주변" })),
-        h("p", { class: "hint", text: "상자나 시체 근처에서 F를 눌러 수색하세요." }),
+        h("p", { class: "hint", text: this.app.touch ? "상자나 시체 가까이에서 화면의 ✋ 안내를 눌러 수색하세요." : "상자나 시체 근처에서 F를 눌러 수색하세요." }),
         this.inv.zoneView("ground", "여기에 놓으면 바닥에 버립니다", "ground-zone"),
       );
     }
-    this.invLayer.replaceChildren(h("div", { class: "inv-wrap" }, left, right), h("div", { class: "inv-footer", text: "Tab / Esc 닫기 · 인벤토리를 열어도 시간은 흐릅니다!" }));
+    const footer = h(
+      "div",
+      { class: "inv-footer" },
+      h("button", { class: "ghost-btn inv-close", text: this.app.touch ? "닫기" : "닫기 (Tab)", onclick: () => this.toggleInventory(false) }),
+      h("span", { text: "인벤토리를 열어도 시간은 흐릅니다!" }),
+    );
+    this.invLayer.replaceChildren(h("div", { class: "inv-wrap", style: { "--cell": `${this.inv.cell}px` } }, left, right), footer);
+  }
+
+  /** 보이는 전리품을 챙긴다: 빈 장비 칸부터 채우고, 나머지는 칸당 가치가 높은 순서로 가방·주머니에 */
+  takeAll(container) {
+    const g = this.gear;
+    const grid = container.grid;
+    const visible = () => grid.items.filter((it) => grid.seen.has(it.uid));
+    let taken = 0;
+    for (const item of visible()) {
+      const empty = Object.keys(SLOT_TYPES).find((s) => !g.equip[s] && slotAccepts(s, item));
+      if (!empty) continue;
+      removeItem(grid, item);
+      g.equip[empty] = item;
+      taken += 1;
+    }
+    const carried = [g.equip.backpack?.data.grid, g.pockets].filter(Boolean);
+    const perCell = (it) => sellPrice(it) / (ITEMS[it.id].w * ITEMS[it.id].h);
+    for (const item of visible().sort((a, b) => perCell(b) - perCell(a))) {
+      if (transfer(item, { type: "grid", grid }, carried)) taken += 1;
+    }
+    const left = visible().length;
+    if (taken === 0) this.app.toast("가방에 공간이 없습니다", "warn");
+    else if (left > 0) this.app.toast(`${taken}개 챙김 · ${left}개는 공간이 부족해 남겼습니다`, "warn");
+    hideTooltip();
+    this.raid.invDirty = true;
   }
 
   quickMove(item, from) {
     const raid = this.raid;
-    const p = this.profile;
+    const p = this.gear;
     const carried = [p.equip.backpack?.data.grid, p.pockets].filter(Boolean);
     const lootGrid = raid.lootTarget?.grid;
     if (from.type === "grid" && from.grid.seen) {
@@ -279,7 +353,7 @@ export class RaidUI {
 
   menuItems(item, from) {
     const raid = this.raid;
-    const p = this.profile;
+    const p = this.gear;
     const def = ITEMS[item.id];
     const out = [];
     const inLoot = from.type === "grid" && !!from.grid.seen;

@@ -11,7 +11,8 @@ import { TS } from "../world/map.js";
 import { Pathfinder } from "../world/pathfind.js";
 import { computeHit, explosionDamage } from "../systems/combat.js";
 import { makeGrid, addItem, addToGrids, takeItem, countItem, forEachItemDeep, gridWeight, itemWeight, removeItem, makeStacks } from "../systems/inventory.js";
-import { maxHp, carriedGrids } from "../systems/profile.js";
+import { maxHp, pmcLoadout, loadoutGrids } from "../systems/profile.js";
+import { loadoutUids } from "../systems/scav.js";
 import { createContainer, createEnemy, createCorpse, searchTime } from "./spawn.js";
 import { initAI, updateAI, aiHear, aiHit, enterCombat } from "./ai.js";
 import { audio } from "./audio.js";
@@ -19,10 +20,19 @@ import { audio } from "./audio.js";
 const PLAYER_SPEED = 172;
 const ENEMY_DAMAGE_MUL = 0.75;
 const INTERACT_RANGE = 66;
+export const SOUND_LIFE = { shot: 1.4, step: 0.7, boom: 2, door: 1.2, voice: 1.2 };
+
+function keyNameFor(lock) {
+  const def = Object.values(ITEMS).find((d) => d.type === "key" && d.lock === lock);
+  return def ? def.name : "열쇠";
+}
 
 export class Raid {
-  constructor(profile, mapId, { seed = Date.now(), onEnd = () => {}, onMessage = () => {} } = {}) {
+  constructor(profile, mapId, { seed = Date.now(), onEnd = () => {}, onMessage = () => {}, loadout = null } = {}) {
     this.profile = profile;
+    // 레이드에 들고 온 장비. 일반 출격은 프로필 장비 그대로, 떠돌이 출격은 무작위 지급품
+    this.loadout = loadout ?? pmcLoadout(profile);
+    this.scavMode = !!this.loadout.scav;
     this.def = MAPS[mapId];
     this.mapId = mapId;
     this.rng = new Rng(seed);
@@ -53,6 +63,9 @@ export class Raid {
     this.kills = [];
     this.searched = 0;
     this.damageDealt = 0;
+    this.unlocks = 0;
+    this.sounds = [];
+    this.scavHostile = false;
     this.nextContainerId = 0;
     this.reinforceT = this.rng.range(this.def.reinforce.every[0], this.def.reinforce.every[1]);
 
@@ -67,6 +80,12 @@ export class Raid {
     this.setupExtracts();
     this.setupEnemies();
     this.startValue = this.carriedValue();
+    this.startUids = loadoutUids(this.loadout);
+  }
+
+  /** 레이드 중 들고 다니는 그리드 (주머니, 가방, 보안 컨테이너) */
+  carried() {
+    return loadoutGrids(this.loadout);
   }
 
   // ── 초기화 ──────────────────────────────────────────
@@ -87,8 +106,8 @@ export class Raid {
       hp: maxHp(p),
       maxHp: maxHp(p),
       alive: true,
-      equip: p.equip,
-      weaponSlot: p.equip.primary ? "primary" : "secondary",
+      equip: this.loadout.equip,
+      weaponSlot: this.loadout.equip.primary ? "primary" : "secondary",
       fireCd: 0,
       reload: null,
       bloom: 0,
@@ -147,6 +166,9 @@ export class Raid {
 
   addEnemy(type, x, y, opts = {}) {
     const e = createEnemy(this.rng, type, x, y, opts);
+    // 떠돌이 출격이면 떠돌이 오리들은 같은 편 (먼저 쏘기 전까지)
+    if (this.scavMode && type === "scav" && !this.scavHostile) e.friendly = true;
+    if (e.melee) e.healed = true;
     initAI(this, e, opts.mode ?? "patrol");
     this.enemies.push(e);
     return e;
@@ -171,6 +193,7 @@ export class Raid {
       this.updateWeaponState(e, dt);
       if (e.speechT > 0) e.speechT -= dt;
       if (e.hurtT > 0) e.hurtT -= dt;
+      if (e.pecking > 0) e.pecking -= dt;
     }
     this.separateActors();
     this.updateVisibility(dt);
@@ -179,6 +202,7 @@ export class Raid {
     this.updateEffects(dt);
     this.updateReinforcements(dt);
     if (this.player.alive) this.updateExtraction(dt);
+    if (this.sounds.length) this.sounds = this.sounds.filter((s) => this.time - s.t < (SOUND_LIFE[s.kind] ?? 1));
     this.shake = Math.max(0, this.shake - dt * 30);
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
     if (this.hitMarker) {
@@ -230,11 +254,11 @@ export class Raid {
 
   carriedWeight() {
     let w = 0;
-    for (const slot of Object.keys(this.profile.equip)) {
-      const item = this.profile.equip[slot];
+    for (const slot of Object.keys(this.loadout.equip)) {
+      const item = this.loadout.equip[slot];
       if (item) w += itemWeight(item);
     }
-    w += gridWeight(this.profile.pockets) + gridWeight(this.profile.secure);
+    w += gridWeight(this.loadout.pockets) + (this.loadout.secure ? gridWeight(this.loadout.secure) : 0);
     return w;
   }
 
@@ -355,8 +379,8 @@ export class Raid {
     // 퀵슬롯 (주머니 1~4)
     cmd.quick?.forEach((pressed, i) => {
       if (!pressed) return;
-      const item = this.profile.pockets.items.find((it) => it.x === i && it.y === 0);
-      if (item) this.useItem(item, this.profile.pockets);
+      const item = this.loadout.pockets.items.find((it) => it.x === i && it.y === 0);
+      if (item) this.useItem(item, this.loadout.pockets);
     });
 
     // 상호작용
@@ -392,6 +416,27 @@ export class Raid {
     this.integrate(actor, dt);
     actor.walkPhase += dt * speed * 0.06;
     actor.moving = true;
+    // 오리의 발소리 (고양이는 소리 없이 다가온다)
+    if (actor.kind === "enemy" && !actor.melee) {
+      actor.stepT = (actor.stepT ?? Math.random() * 0.4) - dt * (speed / 170);
+      if (actor.stepT <= 0) {
+        actor.stepT = 0.42;
+        const p = this.player;
+        const d = dist(actor.x, actor.y, p.x, p.y);
+        if (d < 520) {
+          audio.footstep(d, clamp((actor.x - p.x) / 700, -1, 1), false);
+          if (!actor.visible) this.addSound(actor.x, actor.y, "step");
+        }
+      }
+    }
+  }
+
+  /** 시야 밖의 소리를 화면에 방향 표시로 남긴다 */
+  addSound(x, y, kind) {
+    const p = this.player;
+    if (dist(x, y, p.x, p.y) > 1700) return;
+    this.sounds.push({ x, y, kind, t: this.time });
+    if (this.sounds.length > 48) this.sounds.shift();
   }
 
   separateActors() {
@@ -446,7 +491,7 @@ export class Raid {
 
   findReloadAmmo(weapon) {
     const def = ITEMS[weapon.id];
-    const grids = carriedGrids(this.profile);
+    const grids = this.carried();
     if (weapon.data.ammoId && countItem(grids, weapon.data.ammoId) > 0) return weapon.data.ammoId;
     let best = null;
     let bestCount = 0;
@@ -467,7 +512,7 @@ export class Raid {
   reserveAmmo(weapon) {
     if (!weapon) return 0;
     const def = ITEMS[weapon.id];
-    const grids = carriedGrids(this.profile);
+    const grids = this.carried();
     let n = 0;
     for (const grid of grids) {
       forEachItemDeep(grid, (item) => {
@@ -516,7 +561,7 @@ export class Raid {
       actor.reload = null;
       return;
     }
-    const grids = carriedGrids(this.profile);
+    const grids = this.carried();
     if (w.data.mag > 0 && w.data.ammoId !== r.ammoId) {
       // 다른 탄종이 들어 있으면 빼서 인벤토리로
       for (const stack of makeStacks(w.data.ammoId, w.data.mag)) {
@@ -620,8 +665,20 @@ export class Raid {
     } else {
       // 적의 총성은 다른 적들도 듣는다
       this.noise(actor.x, actor.y, def.noise * 0.6, 0.5, actor);
+      if (!actor.visible) this.addSound(actor.x, actor.y, "shot");
     }
     return true;
+  }
+
+  /** 근접 공격 (들고양이의 할퀴기). 방탄복이 있으면 덜 아프다 */
+  meleeAttack(attacker, target, damage) {
+    attacker.pecking = 0.2;
+    let dmg = damage;
+    if (target.equip.armor && target.equip.armor.data.dur > 0) dmg *= 0.65;
+    const angle = Math.atan2(target.y - attacker.y, target.x - attacker.x);
+    const p = this.player;
+    audio.scratch(dist(attacker.x, attacker.y, p.x, p.y), clamp((attacker.x - p.x) / 700, -1, 1));
+    this.applyDamage(target, { damage: dmg, pen: 0, pellets: 1 }, 1, attacker, { melee: true, angle, cause: `${attacker.name}의 발톱` });
   }
 
   peck(actor) {
@@ -715,6 +772,7 @@ export class Raid {
 
   applyDamage(target, ammo, dmgMul, attacker, { angle = 0, melee = false, cause = null } = {}) {
     if (!target.alive) return;
+    if (target.friendly && attacker?.kind === "player") this.betrayScavs(target);
     const isPlayerTarget = target.kind === "player";
     let headChance = isPlayerTarget ? 0.08 : 0.1;
     if (attacker?.kind === "player" && attacker.ads) headChance += 0.08;
@@ -769,6 +827,19 @@ export class Raid {
     }
   }
 
+  /** 떠돌이 출격 중 같은 편을 공격하면, 맞은 오리와 근처 떠돌이들이 적으로 돌아선다 */
+  betrayScavs(victim) {
+    this.scavHostile = true;
+    for (const e of this.enemies) {
+      if (!e.alive || !e.friendly) continue;
+      if (e === victim || dist(e.x, e.y, victim.x, victim.y) < 650) {
+        e.friendly = false;
+        if (e !== victim) aiHear(this, e, this.player.x, this.player.y, 0.9);
+      }
+    }
+    this.message("떠돌이 오리들이 적으로 돌아섰다!", "#ff8a7a");
+  }
+
   weaponName(actor) {
     const w = this.currentWeapon(actor);
     return w ? ITEMS[w.id].name : "부리";
@@ -817,7 +888,7 @@ export class Raid {
   // ── 수류탄 ──────────────────────────────────────────
 
   playerThrowGrenade(tx, ty) {
-    const grids = carriedGrids(this.profile);
+    const grids = this.carried();
     if (countItem(grids, "frag") <= 0) {
       this.message("수류탄이 없습니다", "#ff8a7a");
       return;
@@ -889,6 +960,7 @@ export class Raid {
     for (let i = 0; i < 16; i++) this.spawnParticle("spark", g.x, g.y, { angle: this.rng.range(-3.14, 3.14), speed: 500 });
     this.addDecal("scorch", g.x, g.y, 1.4);
     this.noise(g.x, g.y, 1500, 1, g.owner);
+    if (!this.canPlayerSee(g.x, g.y)) this.addSound(g.x, g.y, "boom");
     for (const target of [p, ...this.enemies]) {
       if (!target.alive) continue;
       const d = dist(g.x, g.y, target.x, target.y);
@@ -933,7 +1005,11 @@ export class Raid {
     const d = dist(e.x, e.y, p.x, p.y);
     const pan = clamp((e.x - p.x) / 700, -1, 1);
     if (e.type === "goose") audio.honk(d, pan);
-    else audio.quack(d, pan, e.type === "raider" ? 0.85 : 1, category === "combat" ? 2 : 1);
+    else if (e.melee) {
+      if (category === "combat" || category === "hurt") audio.hiss(d, pan);
+      else audio.meow(d, pan);
+    } else audio.quack(d, pan, e.type === "raider" ? 0.85 : 1, category === "combat" ? 2 : 1);
+    if (e.alive && !e.visible) this.addSound(e.x, e.y, "voice");
   }
 
   message(text, color = "#e8f0ff") {
@@ -978,7 +1054,8 @@ export class Raid {
         const score = d - (facing ? 30 : 0) + 8;
         if (score < bestD) {
           bestD = score;
-          best = { type: "door", tx, ty, open: !this.map.isSolid(tx, ty) };
+          const locked = this.map.isLocked(tx, ty);
+          best = { type: "door", tx, ty, open: !this.map.isSolid(tx, ty), locked, hasKey: locked && !!this.findKey() };
         }
       }
     }
@@ -988,6 +1065,10 @@ export class Raid {
   interact(it) {
     if (it.type === "door") {
       const { tx, ty } = it;
+      if (this.map.isLocked(tx, ty)) {
+        this.unlockDoor(tx, ty);
+        return;
+      }
       if (!this.map.isSolid(tx, ty)) {
         // 닫으려면 문 위에 아무도 없어야 한다
         const cx = tx * TS + TS / 2;
@@ -1008,7 +1089,40 @@ export class Raid {
       const p = this.player;
       const d = dist(actor.x, actor.y, p.x, p.y);
       audio.door(clamp((actor.x - p.x) / 700, -1, 1), d);
+      if (!actor.visible) this.addSound(tx * TS + TS / 2, ty * TS + TS / 2, "door");
     }
+  }
+
+  /** 이 지역의 잠긴 문에 맞는 열쇠를 들고 있나 */
+  findKey() {
+    let found = null;
+    for (const grid of this.carried()) {
+      forEachItemDeep(grid, (item, owner) => {
+        const def = ITEMS[item.id];
+        if (!found && def.type === "key" && def.lock === this.def.lock && item.data.uses > 0) found = { item, grid: owner };
+      });
+      if (found) break;
+    }
+    return found;
+  }
+
+  unlockDoor(tx, ty) {
+    const key = this.findKey();
+    if (!key) {
+      this.message(`잠겨 있다 — ${keyNameFor(this.def.lock)} 필요`, "#ffb54a");
+      audio.locked();
+      return false;
+    }
+    key.item.data.uses -= 1;
+    const left = key.item.data.uses;
+    if (left <= 0) removeItem(key.grid, key.item);
+    this.map.unlock(tx, ty);
+    this.map.openDoor(tx, ty);
+    this.unlocks += 1;
+    audio.unlock();
+    this.message(`🔑 ${ITEMS[key.item.id].name}(으)로 문을 열었다${left > 0 ? ` (남은 사용 ${left}회)` : " (열쇠가 닳아 없어졌다)"}`, "#ffd84a");
+    this.invDirty = true;
+    return true;
   }
 
   openLoot(c) {
@@ -1084,7 +1198,7 @@ export class Raid {
     const def = ITEMS[item.id];
     if (!p.alive || p.using) return false;
     if (def.type === "grenade") {
-      this.message("수류탄은 G키로 던집니다", "#ffd84a");
+      this.message("수류탄은 G키(터치: 💣 버튼)로 던집니다", "#ffd84a");
       return false;
     }
     if (def.type !== "med" && def.type !== "food") return false;
@@ -1262,9 +1376,27 @@ export class Raid {
       v += priceFn(item);
       if (ITEMS[item.id].type === "backpack" && item.data?.grid) forEachItemDeep(item.data.grid, (inner) => (v += priceFn(inner)));
     };
-    for (const item of Object.values(this.profile.equip)) if (item) visit(item);
-    for (const grid of [this.profile.pockets, this.profile.secure]) forEachItemDeep(grid, (item) => (v += priceFn(item)));
+    for (const item of Object.values(this.loadout.equip)) if (item) visit(item);
+    for (const grid of [this.loadout.pockets, this.loadout.secure]) if (grid) forEachItemDeep(grid, (item) => (v += priceFn(item)));
     return v;
+  }
+
+  /** 이번 레이드에서 새로 얻어 들고 나온 아이템 (가치 높은 순) */
+  newItems() {
+    const counts = new Map();
+    const visit = (item) => {
+      if (this.startUids.has(item.uid)) return;
+      counts.set(item.id, (counts.get(item.id) ?? 0) + item.count);
+    };
+    for (const item of Object.values(this.loadout.equip)) {
+      if (!item) continue;
+      visit(item);
+      if (ITEMS[item.id].type === "backpack" && item.data?.grid) forEachItemDeep(item.data.grid, visit);
+    }
+    for (const grid of [this.loadout.pockets, this.loadout.secure]) if (grid) forEachItemDeep(grid, visit);
+    return [...counts.entries()]
+      .map(([id, count]) => ({ id, count }))
+      .sort((a, b) => ITEMS[b.id].value * b.count - ITEMS[a.id].value * a.count);
   }
 
   end(status, cause) {
@@ -1277,11 +1409,14 @@ export class Raid {
     this.result = {
       status,
       cause,
+      scav: this.scavMode,
       mapId: this.mapId,
       mapName: this.def.name,
       time: this.time,
       kills: this.kills,
       searched: this.searched,
+      unlocks: this.unlocks,
+      newItems: survived ? this.newItems() : [],
       xp: { kills: killXp, search: searchXp, survival: survivalXp, total: killXp + searchXp + survivalXp },
       startValue: this.startValue,
       endValue: survived ? this.carriedValue() : 0,

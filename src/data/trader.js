@@ -22,7 +22,7 @@ export const TRADER = {
         ["mp5", 1], ["ak47", 1],
         ["9mm_ap", 30], ["762", 30], ["556", 30], ["12g_slug", 20],
         ["ifak", 1], ["canned", 1], ["energy_drink", 1], ["frag", 1],
-        ["helmet_6b", 1], ["vest_plate", 1], ["bag_tactical", 1],
+        ["helmet_6b", 1], ["vest_plate", 1], ["bag_tactical", 1], ["key_farm", 1],
       ],
     },
     {
@@ -31,7 +31,7 @@ export const TRADER = {
       offers: [
         ["ar15", 1], ["svd", 1],
         ["762_ap", 30], ["556_ap", 30],
-        ["bigkit", 1], ["helmet_ballistic", 1], ["vest_tactical", 1], ["bag_raid", 1],
+        ["bigkit", 1], ["helmet_ballistic", 1], ["vest_tactical", 1], ["bag_raid", 1], ["key_factory", 1],
       ],
     },
   ],
@@ -43,4 +43,5 @@ export const SHOP_CATEGORIES = [
   { id: "ammo", name: "탄약", types: ["ammo", "grenade"] },
   { id: "gear", name: "장비", types: ["armor", "helmet", "backpack"] },
   { id: "med", name: "의료/식량", types: ["med", "food"] },
+  { id: "key", name: "열쇠", types: ["key"] },
 ];

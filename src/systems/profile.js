@@ -36,13 +36,15 @@ export function newProfile(name = "신입 오리") {
     pockets: makeGrid(4, 1, { only1x1: true, noNest: true, kind: "pockets" }),
     secure: makeGrid(2, 2, { noNest: true, kind: "secure" }),
     stash: makeGrid(10, UPGRADES.stash.levels[0].stashH, { kind: "stash" }),
-    hideout: { stash: 0, secure: 0, gym: 0 },
+    hideout: { stash: 0, secure: 0, gym: 0, bench: 0 },
     quests: {},
-    stats: { raids: 0, extracts: 0, deaths: 0, kills: 0, killsByType: {}, bestLoot: 0 },
-    settings: { volume: 0.7, damageNumbers: true },
+    stats: { raids: 0, extracts: 0, deaths: 0, kills: 0, killsByType: {}, bestLoot: 0, scavRaids: 0, unlocks: 0, crafted: 0 },
+    settings: { volume: 0.7, damageNumbers: true, duckColor: "yellow", soundMarkers: true },
     seenTutorial: false,
     inRaid: null,
     lastResult: null,
+    mail: [],
+    scavReadyAt: 0,
   };
 
   addItem(profile.pockets, makeItem("bandage"));
@@ -72,6 +74,10 @@ export function maxHp(profile) {
   return UPGRADES.gym.levels[profile.hideout.gym].maxHp;
 }
 
+export function benchLevel(profile) {
+  return UPGRADES.bench.levels[profile.hideout.bench ?? 0].bench;
+}
+
 export function traderTier(profile) {
   const level = playerLevel(profile);
   let tier = 0;
@@ -82,10 +88,36 @@ export function traderTier(profile) {
 }
 
 export function carriedGrids(profile) {
-  const grids = [profile.pockets];
-  if (profile.equip.backpack) grids.push(profile.equip.backpack.data.grid);
-  grids.push(profile.secure);
+  return loadoutGrids(pmcLoadout(profile));
+}
+
+/** 레이드에 들고 가는 장비 묶음. 일반 출격은 프로필의 장비를 그대로 참조한다 */
+export function pmcLoadout(profile) {
+  return { equip: profile.equip, pockets: profile.pockets, secure: profile.secure, scav: false };
+}
+
+export function loadoutGrids(loadout) {
+  const grids = [loadout.pockets];
+  if (loadout.equip.backpack) grids.push(loadout.equip.backpack.data.grid);
+  if (loadout.secure) grids.push(loadout.secure);
   return grids;
+}
+
+/** 우편함: 창고에 자리가 없을 때 아이템을 보관. 받을 수 있는 만큼 창고로 옮긴다 */
+export function sendToMail(profile, items) {
+  profile.mail ??= [];
+  for (const item of items) if (item && item.count > 0) profile.mail.push(item);
+}
+
+export function deliverMail(profile) {
+  const left = [];
+  let delivered = 0;
+  for (const item of profile.mail ?? []) {
+    if (addItem(profile.stash, item)) delivered += 1;
+    else left.push(item);
+  }
+  profile.mail = left;
+  return { delivered, left: left.length };
 }
 
 /** 시설 레벨에 맞게 창고/보안 컨테이너 크기를 맞춘다 (커지기만 함) */
@@ -133,6 +165,17 @@ export function migrateProfile(raw) {
   profile.stats.killsByType = { ...(raw.stats?.killsByType ?? {}) };
   profile.settings = { ...base.settings, ...raw.settings };
   profile.quests = raw.quests ?? {};
+  profile.mail = Array.isArray(raw.mail) ? raw.mail.filter((item) => item && ITEMS[item.id]) : [];
+  for (const item of profile.mail) {
+    item.count = Math.max(1, Math.min(item.count ?? 1, ITEMS[item.id].stack));
+    item.data ??= {};
+    if (ITEMS[item.id].type === "backpack") {
+      const def = ITEMS[item.id];
+      item.data.grid ??= makeGrid(def.gw, def.gh, { noNest: true, kind: "backpack" });
+      sanitizeGrid(item.data.grid);
+    }
+  }
+  profile.scavReadyAt = Number(raw.scavReadyAt) || 0;
   for (const key of ["pockets", "secure", "stash"]) {
     profile[key] = raw[key] && Array.isArray(raw[key].items) ? raw[key] : base[key];
   }

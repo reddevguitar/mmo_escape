@@ -214,8 +214,12 @@ export function drawDuck(ctx, x, y, angle, o) {
   ctx.restore();
 }
 
-/** 쓰러진 오리 */
+/** 쓰러진 오리 (고양이면 고양이 모양) */
 export function drawCorpse(ctx, x, y, angle, o) {
+  if (o.cat) {
+    drawCatCorpse(ctx, x, y, angle, o);
+    return;
+  }
   const r = o.r ?? 14;
   ctx.save();
   ctx.translate(x, y);
@@ -262,6 +266,133 @@ export function drawCorpse(ctx, x, y, angle, o) {
   ctx.restore();
 }
 
+/**
+ * 탑다운 들고양이. o: { r, body, stripe, walk, moving, hurt, lunge, alpha }
+ */
+export function drawCat(ctx, x, y, angle, o) {
+  const r = o.r ?? 12;
+  const body = o.body ?? "#d98a3d";
+  const stripe = o.stripe ?? shade(body, -0.32);
+  ctx.save();
+  ctx.translate(x, y);
+  if (o.alpha !== undefined) ctx.globalAlpha = o.alpha;
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ellipse(ctx, 3, 5, r * 1.4, r * 0.85);
+  ctx.fill();
+  ctx.rotate(angle);
+  const lunge = o.lunge ? 6 : 0;
+  ctx.translate(lunge, 0);
+  const sway = Math.sin((o.walk ?? 0) * (o.moving ? 1 : 0.25)) * 0.6;
+
+  // 꼬리
+  ctx.strokeStyle = shade(body, -0.1);
+  ctx.lineWidth = r * 0.42;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-r * 1.1, 0);
+  ctx.quadraticCurveTo(-r * 1.9, sway * r * 1.2, -r * 2.3, sway * r * 0.4 + r * 0.6);
+  ctx.stroke();
+  ctx.lineCap = "butt";
+
+  // 다리
+  ctx.fillStyle = shade(body, -0.2);
+  const step = o.moving ? Math.sin(o.walk ?? 0) * 4 : 0;
+  for (const [lx, ly, s] of [[r * 0.55, -r * 0.6, 1], [r * 0.55, r * 0.6, -1], [-r * 0.7, -r * 0.6, -1], [-r * 0.7, r * 0.6, 1]]) {
+    ellipse(ctx, lx + step * s, ly, 3.2, 2.6);
+    ctx.fill();
+  }
+
+  // 몸통
+  ctx.fillStyle = body;
+  ctx.strokeStyle = shade(body, -0.45);
+  ctx.lineWidth = 1.4;
+  ellipse(ctx, -r * 0.1, 0, r * 1.2, r * 0.68);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = stripe;
+  ctx.lineWidth = 2.2;
+  for (let k = -1; k <= 1; k++) {
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.1 + k * r * 0.42, -r * 0.6);
+    ctx.quadraticCurveTo(-r * 0.25 + k * r * 0.42, 0, -r * 0.1 + k * r * 0.42, r * 0.6);
+    ctx.stroke();
+  }
+
+  // 머리와 귀
+  const hx = r * 1.05;
+  const hr = r * 0.55;
+  ctx.fillStyle = body;
+  ctx.strokeStyle = shade(body, -0.45);
+  ctx.lineWidth = 1.3;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(hx - hr * 0.5, side * hr * 0.35);
+    ctx.lineTo(hx - hr * 0.2, side * hr * 1.35);
+    ctx.lineTo(hx + hr * 0.35, side * hr * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ellipse(ctx, hx, 0, hr, hr * 0.95);
+  ctx.fill();
+  ctx.stroke();
+  // 눈 (어둠 속에서 빛난다)
+  ctx.fillStyle = "#c8f05a";
+  for (const side of [-1, 1]) {
+    ellipse(ctx, hx + hr * 0.45, side * hr * 0.42, hr * 0.2, hr * 0.14);
+    ctx.fill();
+  }
+  ctx.fillStyle = o.nose ?? "#f2b5a8";
+  ellipse(ctx, hx + hr * 0.92, 0, 2.2, 1.8);
+  ctx.fill();
+
+  if (o.hurt) {
+    ctx.fillStyle = "rgba(255,70,50,0.5)";
+    ellipse(ctx, -r * 0.1, 0, r * 1.2, r * 0.68);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawCatCorpse(ctx, x, y, angle, o) {
+  const r = o.r ?? 12;
+  const body = o.colors?.body ?? "#d98a3d";
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + 0.6);
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ellipse(ctx, 2, 3, r * 1.4, r * 0.8);
+  ctx.fill();
+  ctx.fillStyle = shade(body, -0.15);
+  ctx.strokeStyle = shade(body, -0.45);
+  ctx.lineWidth = 1.3;
+  ellipse(ctx, 0, 0, r * 1.25, r * 0.7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = shade(body, -0.25);
+  ctx.lineWidth = r * 0.4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-r * 1.1, 0);
+  ctx.lineTo(-r * 2.1, r * 0.3);
+  ctx.stroke();
+  ctx.lineCap = "butt";
+  ctx.fillStyle = shade(body, -0.15);
+  ellipse(ctx, r * 1.05, r * 0.15, r * 0.55, r * 0.5);
+  ctx.fill();
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = 1.4;
+  const ex = r * 1.3;
+  const ey = 0;
+  ctx.beginPath();
+  ctx.moveTo(ex - 2, ey - 2);
+  ctx.lineTo(ex + 2, ey + 2);
+  ctx.moveTo(ex + 2, ey - 2);
+  ctx.lineTo(ex - 2, ey + 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 export function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -279,11 +410,29 @@ export function roundRect(ctx, x, y, w, h, r) {
 
 export const PLAYER_COLORS = { body: "#f6e7a8", head: "#f6e7a8", beak: "#f39a2b", ring: null };
 
+/** 은신처에서 고르는 오리 색 */
+export const DUCK_COLORS = {
+  yellow: { name: "노랑", body: "#f6e7a8", head: "#f6e7a8", beak: "#f39a2b", ring: null },
+  white: { name: "하양", body: "#f4f2ec", head: "#f4f2ec", beak: "#f0a33a", ring: null },
+  mallard: { name: "청둥", body: "#a58a68", head: "#2f7a45", beak: "#e8c13a", ring: "#f2f2f2" },
+  black: { name: "검정", body: "#3a3d42", head: "#2a2c30", beak: "#e0a23a", ring: null },
+  pink: { name: "분홍", body: "#f3b9c9", head: "#f3b9c9", beak: "#f39a2b", ring: null },
+  mint: { name: "민트", body: "#a9e3cf", head: "#a9e3cf", beak: "#f0a33a", ring: null },
+};
+
+/** 떠돌이 출격 때의 변장 (떠돌이 오리와 같은 차림) */
+export const SCAV_COLORS = { body: "#9a7b55", head: "#2f6e3c", beak: "#e8a33a", ring: "#f2f2f2" };
+
+export function duckColors(key) {
+  const c = DUCK_COLORS[key] ?? DUCK_COLORS.yellow;
+  return { body: c.body, head: c.head, beak: c.beak, ring: c.ring };
+}
+
 export function playerDuckOpts(equip, extra = {}) {
   const w = extra.weaponSlot ? equip[extra.weaponSlot] : equip.primary ?? equip.secondary;
   return {
     r: 14,
-    ...PLAYER_COLORS,
+    ...(extra.colors ?? PLAYER_COLORS),
     armor: equip.armor?.id,
     helmet: equip.helmet?.id,
     backpack: equip.backpack?.id,

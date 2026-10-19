@@ -3,7 +3,7 @@
 // 잠긴 의뢰는 기록이 없다. 목표가 모두 채워지면 보상 수령 가능.
 
 import { QUESTS, QUEST_MAP } from "../data/quests.js";
-import { makeStacks, addItem, cloneGrid, countItem, takeItem } from "./inventory.js";
+import { makeStacks, addItem, countItem, takeItem } from "./inventory.js";
 
 export function questState(profile, id) {
   return profile.quests[id]?.state ?? "locked";
@@ -40,6 +40,8 @@ export function questEvent(profile, event) {
         match = goal.map === "any" || goal.map === event.map;
       } else if (goal.type === "search" && event.type === "search") {
         match = true;
+      } else if (goal.type === "unlock" && event.type === "unlock") {
+        match = true;
       }
       if (match) {
         rec.progress[i] = Math.min(goal.count, (rec.progress[i] ?? 0) + (event.count ?? 1));
@@ -66,22 +68,25 @@ export function handover(profile, questId, goalIndex) {
   return { ok: true, taken };
 }
 
-/** 보상 수령. 창고 공간이 부족하면 실패 */
+/** 보상 수령. 창고에 자리가 없는 보상은 우편함으로 간다 */
 export function claimQuest(profile, questId) {
   const quest = QUEST_MAP[questId];
   if (!isQuestComplete(profile, questId)) return { ok: false, msg: "아직 목표를 달성하지 못했습니다" };
-  const trial = cloneGrid(profile.stash);
   const items = [];
   for (const [id, n] of quest.reward.items ?? []) items.push(...makeStacks(id, n));
+  let mailed = 0;
   for (const item of items) {
-    if (!addItem(trial, JSON.parse(JSON.stringify(item)))) return { ok: false, msg: "창고 공간이 부족합니다" };
+    if (!addItem(profile.stash, item)) {
+      profile.mail ??= [];
+      profile.mail.push(item);
+      mailed += 1;
+    }
   }
-  for (const item of items) addItem(profile.stash, item);
   profile.money += quest.reward.money ?? 0;
   profile.xp += quest.reward.xp ?? 0;
   profile.quests[questId].state = "done";
   refreshQuests(profile);
-  return { ok: true };
+  return { ok: true, mailed };
 }
 
 export function readyQuestCount(profile) {

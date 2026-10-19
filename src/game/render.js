@@ -3,13 +3,18 @@
 import { ITEMS } from "../data/items.js";
 import { T, F, TS } from "../world/map.js";
 import { DEG, clamp, angleDiff, smoothstep } from "../core/util.js";
-import { drawDuck, drawCorpse, roundRect, shade, playerDuckOpts } from "./draw.js";
+import { drawDuck, drawCat, drawCorpse, roundRect, shade, playerDuckOpts, duckColors, SCAV_COLORS } from "./draw.js";
+import { SOUND_LIFE } from "./raid.js";
+
+const SOUND_COLORS = { shot: "255,96,72", step: "235,235,235", boom: "255,170,60", door: "255,214,110", voice: "150,205,255" };
 
 const CHUNK_TILES = 8;
 const CHUNK = CHUNK_TILES * TS;
 const MAX_CHUNKS = 40;
 const VIEW_W = 1220;
 const VIEW_H = 720;
+const TOUCH_VIEW_W = 1040;
+const TOUCH_VIEW_H = 600;
 
 const FLOOR_COLORS = {
   [F.GRASS]: "#6f9a4b",
@@ -64,6 +69,7 @@ export class Renderer {
     this.cssW = 1;
     this.cssH = 1;
     this.mouse = { x: 0, y: 0 };
+    this.touch = false; // 터치 조작이면 조금 더 가까이 본다 (작은 화면에서 오리가 너무 작지 않게)
     this.time = 0;
     this.visPoly = [];
     this.resize();
@@ -79,8 +85,9 @@ export class Renderer {
     this.fogScale = 0.5;
     this.fog.width = Math.max(1, Math.round(this.canvas.width * this.fogScale));
     this.fog.height = Math.max(1, Math.round(this.canvas.height * this.fogScale));
-    this.cam.scale = Math.min(this.cssW / VIEW_W, this.cssH / VIEW_H) * 1.0;
-    this.cam.scale = clamp(this.cam.scale, 0.55, 2.2);
+    const [vw, vh] = this.touch ? [TOUCH_VIEW_W, TOUCH_VIEW_H] : [VIEW_W, VIEW_H];
+    this.cam.scale = Math.min(this.cssW / vw, this.cssH / vh);
+    this.cam.scale = clamp(this.cam.scale, this.touch ? 0.45 : 0.55, 2.2);
     const cs = clamp(Math.ceil(this.cam.scale * this.dpr * 4) / 4, 1, 2);
     if (cs !== this.chunkScale) {
       this.chunkScale = cs;
@@ -100,6 +107,10 @@ export class Renderer {
 
   screenToWorld(sx, sy) {
     return { x: (sx - this.cssW / 2) / this.cam.scale + this.cam.x, y: (sy - this.cssH / 2) / this.cam.scale + this.cam.y };
+  }
+
+  worldToScreen(wx, wy) {
+    return { x: (wx - this.cam.x) * this.cam.scale + this.cssW / 2, y: (wy - this.cam.y) * this.cam.scale + this.cssH / 2 };
   }
 
   updateCamera(raid, dt, aim) {
@@ -163,9 +174,11 @@ export class Renderer {
     ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
 
     this.drawOverlayTexts(ctx, raid);
+    this.drawSoundMarkers(ctx, raid);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawScreenEffects(ctx, raid);
+    if (!opts.showMap && raid.player.alive) this.drawMinimap(ctx, raid);
     if (!opts.hideCursor) this.drawCrosshair(ctx, raid);
     if (opts.showMap) this.drawMapOverlay(ctx, raid);
   }
@@ -303,12 +316,13 @@ export class Renderer {
       for (let tx = tx0; tx <= tx1; tx++) {
         if (m.tiles[ty * m.w + tx] !== T.DOOR) continue;
         const open = m.doorOpen[ty * m.w + tx] === 1;
+        const locked = m.locked[ty * m.w + tx] === 1;
         const horiz = isWallLike(m.tile(tx - 1, ty)) || isWallLike(m.tile(tx + 1, ty));
         const x = tx * TS;
         const y = ty * TS;
         ctx.save();
         const hl = highlight && highlight.tx === tx && highlight.ty === ty;
-        ctx.fillStyle = "#7a5230";
+        ctx.fillStyle = locked ? "#5b3a26" : "#7a5230";
         ctx.strokeStyle = hl ? "#ffe27a" : "#3d2814";
         ctx.lineWidth = hl ? 3 : 1.5;
         if (!open) {
@@ -322,6 +336,7 @@ export class Renderer {
           ctx.fillStyle = "#d9b25a";
           if (horiz) ctx.fillRect(x + TS - 9, y + TS / 2 - 2, 4, 4);
           else ctx.fillRect(x + TS / 2 - 2, y + TS - 9, 4, 4);
+          if (locked) drawPadlock(ctx, x + TS / 2, y + TS / 2);
         } else {
           // 열린 문: 경첩 쪽으로 접힌 판
           if (horiz) {
@@ -412,6 +427,32 @@ export class Renderer {
     for (const e of raid.enemies) {
       if (!e.alive || (e.seenAlpha ?? 0) <= 0.01) continue;
       if (!this.inView(e.x, e.y, 60)) continue;
+      if (e.melee) {
+        drawCat(ctx, e.x, e.y, e.angle, {
+          r: e.r,
+          body: e.def.colors.body,
+          stripe: e.def.colors.ring,
+          walk: e.walkPhase,
+          moving: e.moving,
+          hurt: e.hurtT > 0,
+          lunge: e.pecking > 0,
+          alpha: e.seenAlpha,
+        });
+        continue;
+      }
+      if (e.friendly) {
+        // 떠돌이 출격 중 같은 편: 머리 위 초록 표시
+        ctx.save();
+        ctx.globalAlpha = e.seenAlpha;
+        ctx.fillStyle = "rgba(110,230,140,0.9)";
+        ctx.beginPath();
+        ctx.moveTo(e.x - 6, e.y - e.r - 16);
+        ctx.lineTo(e.x + 6, e.y - e.r - 16);
+        ctx.lineTo(e.x, e.y - e.r - 9);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
       drawDuck(ctx, e.x, e.y, e.angle, {
         r: e.r,
         ...e.def.colors,
@@ -427,6 +468,7 @@ export class Renderer {
     }
     if (p.alive) {
       drawDuck(ctx, p.x, p.y, p.angle, playerDuckOpts(p.equip, {
+        colors: raid.scavMode ? SCAV_COLORS : duckColors(raid.profile.settings.duckColor),
         weaponSlot: p.weaponSlot,
         walk: p.walkPhase,
         moving: Math.hypot(p.vx, p.vy) > 20,
@@ -434,9 +476,6 @@ export class Renderer {
         crouch: p.crouch,
         peck: p.pecking > 0,
       }));
-      if (!p.equip[p.weaponSlot]) {
-        // 무기가 없으면 아무것도 안 들고 있다
-      }
     }
   }
 
@@ -608,7 +647,198 @@ export class Renderer {
     f.beginPath();
     f.arc(p.x, p.y, 60, 0, 6.28);
     f.fill();
+    // 총구 섬광과 폭발은 어둠 속에서도 잠깐 주변을 밝힌다 (시야 밖 사수의 위치 단서)
+    const flashR = night ? 170 : 120;
+    for (const part of raid.particles) {
+      let r = 0;
+      let a = 0;
+      if (part.type === "flash") {
+        r = flashR;
+        a = 0.85;
+      } else if (part.type === "blast") {
+        r = part.size * 1.5;
+        a = 1 - part.t / part.life;
+      } else {
+        continue;
+      }
+      const gl = f.createRadialGradient(part.x, part.y, 0, part.x, part.y, r);
+      gl.addColorStop(0, `rgba(0,0,0,${a})`);
+      gl.addColorStop(1, "rgba(0,0,0,0)");
+      f.fillStyle = gl;
+      f.beginPath();
+      f.arc(part.x, part.y, r, 0, 6.28);
+      f.fill();
+    }
     f.globalCompositeOperation = "source-over";
+  }
+
+  /** 시야 밖의 소리를 플레이어 주변 호(弧)로 표시 */
+  drawSoundMarkers(ctx, raid) {
+    const p = raid.player;
+    if (!p.alive || raid.profile.settings.soundMarkers === false) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    for (const s of raid.sounds) {
+      const life = SOUND_LIFE[s.kind] ?? 1;
+      const age = raid.time - s.t;
+      if (age > life) continue;
+      const d = Math.hypot(s.x - p.x, s.y - p.y);
+      if (d < 50) continue;
+      const k = 1 - age / life;
+      const near = clamp(1 - d / 1600, 0.15, 1);
+      const ang = Math.atan2(s.y - p.y, s.x - p.x);
+      const span = 0.16 + near * 0.5;
+      const R = 44 + (1 - near) * 14;
+      const rgb = SOUND_COLORS[s.kind] ?? "255,255,255";
+      ctx.strokeStyle = `rgba(0,0,0,${0.35 * k})`;
+      ctx.lineWidth = s.kind === "step" ? 5 : 7;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, R, ang - span / 2, ang + span / 2);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(${rgb},${0.9 * k})`;
+      ctx.lineWidth = s.kind === "step" ? 2.5 : 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, R, ang - span / 2, ang + span / 2);
+      ctx.stroke();
+      if (s.kind === "shot" || s.kind === "boom") {
+        const tx = p.x + Math.cos(ang) * (R + 9);
+        const ty = p.y + Math.sin(ang) * (R + 9);
+        ctx.fillStyle = `rgba(${rgb},${0.95 * k})`;
+        ctx.beginPath();
+        ctx.moveTo(tx + Math.cos(ang) * 6, ty + Math.sin(ang) * 6);
+        ctx.lineTo(tx + Math.cos(ang + 2.3) * 5, ty + Math.sin(ang + 2.3) * 5);
+        ctx.lineTo(tx + Math.cos(ang - 2.3) * 5, ty + Math.sin(ang - 2.3) * 5);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** 탐색 여부 마스크(타일 해상도)를 가끔 갱신 */
+  updateFogMask(m, force = false) {
+    if (!this.fogMask || this.fogMask.width !== m.w) {
+      this.fogMask = document.createElement("canvas");
+      this.fogMask.width = m.w;
+      this.fogMask.height = m.h;
+      force = true;
+    }
+    if (!force && this.time - (this.fogMaskT ?? -9) < 0.4) return;
+    this.fogMaskT = this.time;
+    const mctx = this.fogMask.getContext("2d");
+    const img = mctx.createImageData(m.w, m.h);
+    for (let i = 0; i < m.w * m.h; i++) {
+      img.data[i * 4] = 6;
+      img.data[i * 4 + 1] = 10;
+      img.data[i * 4 + 2] = 14;
+      img.data[i * 4 + 3] = m.explored[i] ? 0 : 190;
+    }
+    mctx.putImageData(img, 0, 0);
+  }
+
+  minimapSize() {
+    return this.cssW <= 760 || this.cssH <= 500 ? 118 : 168;
+  }
+
+  /** 오른쪽 위 미니맵: 주변 지형, 탐색한 곳, 탈출 지점, 보이는 적 */
+  drawMinimap(ctx, raid) {
+    const m = raid.map;
+    if (!this.mapImage) this.mapImage = this.buildMapImage(m);
+    this.updateFogMask(m);
+    const { canvas, px } = this.mapImage;
+    const size = this.minimapSize();
+    const x0 = this.cssW - size - 14;
+    const y0 = 14;
+    const tiles = 34;
+    const p = raid.player;
+    const ptx = p.x / TS;
+    const pty = p.y / TS;
+    const scale = size / tiles; // 화면 픽셀 / 타일
+    ctx.save();
+    roundRect(ctx, x0, y0, size, size, 12);
+    ctx.fillStyle = "rgba(8,12,16,0.82)";
+    ctx.fill();
+    ctx.clip();
+    ctx.imageSmoothingEnabled = false;
+    const sx = (ptx - tiles / 2) * px;
+    const sy = (pty - tiles / 2) * px;
+    ctx.drawImage(canvas, sx, sy, tiles * px, tiles * px, x0, y0, size, size);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.fogMask, ptx - tiles / 2, pty - tiles / 2, tiles, tiles, x0, y0, size, size);
+    const toMini = (wx, wy) => [x0 + size / 2 + (wx / TS - ptx) * scale, y0 + size / 2 + (wy / TS - pty) * scale];
+    // 시야 부채꼴
+    const v = raid.playerVision();
+    ctx.fillStyle = "rgba(255,240,170,0.12)";
+    ctx.beginPath();
+    ctx.moveTo(x0 + size / 2, y0 + size / 2);
+    ctx.arc(x0 + size / 2, y0 + size / 2, (v.viewDist / TS) * scale, p.angle - v.fov / 2, p.angle + v.fov / 2);
+    ctx.closePath();
+    ctx.fill();
+    // 잠긴 문 (탐색한 곳만)
+    ctx.font = "9px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const r of m.lockedRooms) {
+      if (!m.explored[r.door.ty * m.w + r.door.tx] || !m.isLocked(r.door.tx, r.door.ty)) continue;
+      const [lx, ly] = toMini((r.door.tx + 0.5) * TS, (r.door.ty + 0.5) * TS);
+      ctx.fillStyle = "#e9c55a";
+      ctx.fillRect(lx - 3, ly - 3, 6, 6);
+    }
+    // 보이는 적
+    for (const e of raid.enemies) {
+      if (!e.alive || !e.visible) continue;
+      const [ex, ey] = toMini(e.x, e.y);
+      ctx.fillStyle = e.friendly ? "#6fdc8c" : "#ff5a4a";
+      ctx.beginPath();
+      ctx.arc(ex, ey, 3, 0, 6.28);
+      ctx.fill();
+    }
+    ctx.restore();
+    // 탈출 지점 (밖에 있으면 테두리에 화살표)
+    const cx = x0 + size / 2;
+    const cy = y0 + size / 2;
+    for (const x of raid.extracts) {
+      let [ex, ey] = toMini(x.x, x.y);
+      const inside = ex > x0 + 6 && ex < x0 + size - 6 && ey > y0 + 6 && ey < y0 + size - 6;
+      ctx.fillStyle = raid.extractZone === x ? "#b9ffca" : "#58e07a";
+      if (inside) {
+        ctx.beginPath();
+        ctx.arc(ex, ey, 4.5, 0, 6.28);
+        ctx.fill();
+      } else {
+        const ang = Math.atan2(ey - cy, ex - cx);
+        const rr = size / 2 - 8;
+        ex = cx + Math.cos(ang) * rr;
+        ey = cy + Math.sin(ang) * rr;
+        ctx.save();
+        ctx.translate(ex, ey);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-4, -4.5);
+        ctx.lineTo(-4, 4.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    // 플레이어
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(p.angle);
+    ctx.fillStyle = "#ffd84a";
+    ctx.beginPath();
+    ctx.moveTo(7, 0);
+    ctx.lineTo(-5, -5);
+    ctx.lineTo(-2, 0);
+    ctx.lineTo(-5, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    roundRect(ctx, x0, y0, size, size, 12);
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
   }
 
   // ── 텍스트 (안개 위) ────────────────────────────────
@@ -802,20 +1032,7 @@ export class Renderer {
     ctx.drawImage(canvas, mx, my, mw, mh);
     // 미탐색 지역 어둡게 (타일 해상도 마스크를 부드럽게 확대)
     const cell = px * scale;
-    if (!this.fogMask || this.fogMask.width !== m.w) {
-      this.fogMask = document.createElement("canvas");
-      this.fogMask.width = m.w;
-      this.fogMask.height = m.h;
-    }
-    const mctx = this.fogMask.getContext("2d");
-    const img = mctx.createImageData(m.w, m.h);
-    for (let i = 0; i < m.w * m.h; i++) {
-      img.data[i * 4] = 6;
-      img.data[i * 4 + 1] = 10;
-      img.data[i * 4 + 2] = 14;
-      img.data[i * 4 + 3] = m.explored[i] ? 0 : 190;
-    }
-    mctx.putImageData(img, 0, 0);
+    this.updateFogMask(m, true);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(this.fogMask, mx, my, mw, mh);
     ctx.strokeStyle = "rgba(255,255,255,0.3)";
@@ -828,6 +1045,19 @@ export class Renderer {
       ctx.font = "bold 12px system-ui, sans-serif";
       ctx.fillStyle = "rgba(255,255,255,0.75)";
       ctx.fillText(l.text, lx, ly);
+    }
+    // 잠긴 방 (탐색한 곳만)
+    for (const r of m.lockedRooms) {
+      if (!m.explored[r.door.ty * m.w + r.door.tx]) continue;
+      const [lx, ly] = toMap((r.door.tx + 0.5) * TS, (r.door.ty + 0.5) * TS);
+      const lockedNow = m.isLocked(r.door.tx, r.door.ty);
+      ctx.fillStyle = lockedNow ? "#e9c55a" : "rgba(233,197,90,0.4)";
+      ctx.fillRect(lx - 5, ly - 4, 10, 8);
+      ctx.strokeStyle = ctx.fillStyle;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(lx, ly - 4, 3.5, Math.PI, 0);
+      ctx.stroke();
     }
     for (const x of raid.extracts) {
       const [ex, ey] = toMap(x.x, x.y);
@@ -858,7 +1088,7 @@ export class Renderer {
     ctx.restore();
     ctx.font = "bold 18px system-ui, sans-serif";
     ctx.fillStyle = "#fff";
-    ctx.fillText(`${raid.def.name} — 지도 (M 닫기)`, W / 2, my - 22);
+    ctx.fillText(`${raid.def.name} — 지도${this.touch ? "" : " (M 닫기)"}`, W / 2, my - 22);
     ctx.restore();
   }
 
@@ -866,6 +1096,25 @@ export class Renderer {
     const v = this.view;
     return x > v.x0 - pad && x < v.x1 + pad && y > v.y0 - pad && y < v.y1 + pad;
   }
+}
+
+/** 잠긴 문 표시용 자물쇠 */
+function drawPadlock(ctx, cx, cy) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.strokeStyle = "#e9c55a";
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(0, -3, 4.5, Math.PI, 0);
+  ctx.stroke();
+  ctx.fillStyle = "#e9c55a";
+  ctx.strokeStyle = "#5a4310";
+  ctx.lineWidth = 1;
+  ctx.fillRect(-6, -3, 12, 9);
+  ctx.strokeRect(-6, -3, 12, 9);
+  ctx.fillStyle = "#3a2a08";
+  ctx.fillRect(-1, 0, 2, 4);
+  ctx.restore();
 }
 
 function isWallLike(t) {

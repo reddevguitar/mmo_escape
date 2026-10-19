@@ -7,6 +7,8 @@ import { MAPS } from "../src/data/maps.js";
 import { Raid } from "../src/game/raid.js";
 import { newProfile } from "../src/systems/profile.js";
 import { makeItem } from "../src/systems/inventory.js";
+import { makeScavLoadout } from "../src/systems/scav.js";
+import { Rng } from "../src/core/rng.js";
 
 function reachableFrom(m, sx, sy) {
   const seen = new Uint8Array(m.w * m.h);
@@ -20,7 +22,8 @@ function reachableFrom(m, sx, sy) {
       const ny = y + dy;
       if (!m.inBounds(nx, ny)) continue;
       const ni = ny * m.w + nx;
-      if (!seen[ni] && m.isWalkableForAI(nx, ny)) {
+      // 잠긴 문도 열쇠로 열 수 있으므로 통과 가능으로 본다
+      if (!seen[ni] && (m.isDoor(nx, ny) || m.isWalkableForAI(nx, ny))) {
         seen[ni] = 1;
         q.push(ni);
       }
@@ -52,6 +55,15 @@ for (const id of Object.keys(MAPS)) {
       assert.ok(ok, `컨테이너 접근 가능 ${c.kind}@${c.tx},${c.ty}`);
     }
     if (MAPS[id].boss) assert.ok(m.bossSpawn, "보스 스폰");
+    // 잠긴 방: 문은 잠겨 있고, 적 스폰은 안에 없다
+    assert.equal(m.lockedRooms.length, MAPS[id].lockedRooms ?? 0);
+    for (const r of m.lockedRooms) {
+      assert.ok(m.isLocked(r.door.tx, r.door.ty));
+      assert.ok(!m.isWalkableForAI(r.door.tx, r.door.ty), "AI는 잠긴 문을 못 지나간다");
+      const inside = (x, y) => x >= r.x * TS && x < (r.x + r.w) * TS && y >= r.y * TS && y < (r.y + r.h) * TS;
+      assert.ok(!m.enemySpawns.some((s) => inside(s.x, s.y)), "잠긴 방 안에 적 스폰 없음");
+      assert.ok(m.containers.some((c) => c.locked), "잠긴 방에 상자");
+    }
   });
 }
 
@@ -136,4 +148,47 @@ test("재장전 중 다른 총으로 바꾸면 장전이 취소된다", () => {
   assert.equal(pistol.data.ammoId, "9mm");
   assert.equal(pistol.data.mag, 3);
   assert.equal(ammo.count, 60, "7.62 탄은 소모되지 않음");
+});
+
+test("열쇠로 잠긴 문 열기: 사용 횟수 감소, 잠금 해제 기록", () => {
+  const profile = newProfile();
+  const raid = new Raid(profile, "farm", { seed: 11 });
+  raid.enemies = [];
+  const room = raid.map.lockedRooms[0];
+  const { tx, ty } = room.door;
+  assert.ok(!raid.unlockDoor(tx, ty), "열쇠 없으면 실패");
+  assert.ok(raid.map.isLocked(tx, ty));
+  const key = makeItem("key_farm");
+  key.data.uses = 1;
+  profile.pockets.items = [];
+  profile.pockets.items.push(key);
+  assert.ok(raid.unlockDoor(tx, ty));
+  assert.ok(!raid.map.isLocked(tx, ty));
+  assert.ok(!raid.map.isSolid(tx, ty), "열리면서 문도 열린다");
+  assert.equal(profile.pockets.items.length, 0, "마지막 사용이면 열쇠가 사라진다");
+  assert.equal(raid.unlocks, 1);
+});
+
+test("떠돌이 출격 중 떠돌이 오리는 같은 편이고, 쏘면 적이 된다", () => {
+  const profile = newProfile();
+  const raid = new Raid(profile, "farm", { seed: 12, loadout: makeScavLoadout(new Rng(3)) });
+  const scavs = raid.enemies.filter((e) => e.type === "scav");
+  assert.ok(scavs.length > 0 && scavs.every((e) => e.friendly));
+  const target = scavs[0];
+  raid.applyDamage(target, { damage: 5, pen: 0, pellets: 1 }, 1, raid.player, { melee: true });
+  assert.equal(target.friendly, false);
+  assert.ok(raid.scavHostile);
+});
+
+test("고양이는 문을 못 열고, 오리는 연다", () => {
+  const m = generateMap(MAPS.farm);
+  let door = null;
+  for (let i = 0; i < m.w * m.h && !door; i++) {
+    if (m.tiles[i] === T.DOOR && !m.locked[i]) door = { tx: i % m.w, ty: Math.floor(i / m.w), i };
+  }
+  m.doorOpen[door.i] = 0;
+  assert.ok(m.isWalkableForAI(door.tx, door.ty, true));
+  assert.ok(!m.isWalkableForAI(door.tx, door.ty, false));
+  m.doorOpen[door.i] = 1;
+  assert.ok(m.isWalkableForAI(door.tx, door.ty, false));
 });

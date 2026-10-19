@@ -1,4 +1,5 @@
-// 그리드 인벤토리 UI: 드래그 앤 드롭, 회전(R), 스택 합치기, 탄약 장전, 툴팁, 우클릭 메뉴
+// 그리드 인벤토리 UI: 드래그 앤 드롭, 회전(R), 스택 합치기, 탄약 장전, 툴팁, 우클릭 메뉴.
+// 터치: 탭하면 정보+메뉴, 길게 누르면 끌기(끄는 동안 ↻ 버튼으로 회전), 그냥 밀면 스크롤.
 
 import { ITEMS, RARITY, TYPE_NAMES, CALIBERS, WEAPON_CLASS_NAMES, sellPrice } from "../data/items.js";
 import { h } from "../core/dom.js";
@@ -18,6 +19,9 @@ export function hideMenu() {
   menu.classList.add("hidden");
 }
 
+const LONG_PRESS_MS = 280;
+const TOUCH_GHOST_LIFT = 44; // 손가락에 가리지 않게 끄는 아이템을 위로 띄운다
+
 export function hideTooltip() {
   tooltip.classList.add("hidden");
 }
@@ -27,7 +31,8 @@ export class InventoryUI {
    * ctx: {
    *   cell, mode,
    *   isHidden(item, grid), searching(grid) -> item|null,
-   *   quickMove(item, from), menuItems(item, from) -> [{label, action}],
+   *   quickMove(item, from), quickLabel(item, from) -> 터치 메뉴에 보일 빠른 이동 이름|null,
+   *   menuItems(item, from) -> [{label, action}],
    *   onDropZone(zone, item, from), canDropZone(zone, item),
    *   afterMove(item, from, to), changed()
    * }
@@ -39,17 +44,25 @@ export class InventoryUI {
     this.pending = null;
     this.onMove = (e) => this.pointerMove(e);
     this.onUp = (e) => this.pointerUp(e);
+    this.onCancel = (e) => this.pointerCancel(e);
     this.onKey = (e) => {
       if (this.drag && e.code === "KeyR") {
         e.preventDefault();
         this.rotateDrag();
       }
     };
+    // 터치로 끄는 중에는 화면이 스크롤되지 않게 (passive가 아니어야 막을 수 있다)
+    this.onTouchMove = (e) => {
+      if (this.drag?.touch && e.cancelable) e.preventDefault();
+    };
     window.addEventListener("keydown", this.onKey);
+    window.addEventListener("touchmove", this.onTouchMove, { passive: false });
   }
 
   destroy() {
     window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("touchmove", this.onTouchMove);
+    this.clearPending();
     this.cancelDrag();
   }
 
@@ -131,8 +144,8 @@ export class InventoryUI {
     if (def.type === "backpack" && item.data?.grid?.items.length) el.append(h("span", { class: "badge", text: `${item.data.grid.items.length}` }));
 
     el.addEventListener("pointerdown", (e) => this.pointerDown(e, item, from));
-    el.addEventListener("pointerenter", (e) => this.showTooltip(e, item));
-    el.addEventListener("pointermove", (e) => this.moveTooltip(e));
+    el.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && this.showTooltip(e, item));
+    el.addEventListener("pointermove", (e) => e.pointerType === "mouse" && this.moveTooltip(e));
     el.addEventListener("pointerleave", hideTooltip);
     el.addEventListener("dblclick", () => {
       const items = this.ctx.menuItems?.(item, from) ?? [];
@@ -144,6 +157,8 @@ export class InventoryUI {
     });
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      // 안드로이드는 길게 누르면 contextmenu도 보낸다. 터치는 탭 메뉴/길게 끌기로 처리한다
+      if (performance.now() - (this.lastTouch ?? -1e9) < 1500) return;
       this.openMenu(e, item, from);
     });
     return el;
@@ -153,6 +168,15 @@ export class InventoryUI {
 
   showTooltip(e, item) {
     if (this.drag) return;
+    const lines = this.infoLines(item);
+    const hint = this.ctx.mode === "raid" ? "우클릭: 메뉴 · Shift+클릭: 빠른 이동 · 드래그 중 R: 회전" : this.ctx.mode === "trader" ? "Shift+클릭: 판매 · 우클릭: 메뉴 · 드래그 중 R: 회전" : "우클릭: 메뉴 · Shift+클릭: 빠른 이동 · 드래그 중 R: 회전";
+    lines.push(h("div", { class: "tt-hint", text: hint }));
+    tooltip.replaceChildren(...lines);
+    tooltip.classList.remove("hidden");
+    this.moveTooltip(e);
+  }
+
+  infoLines(item) {
     const def = ITEMS[item.id];
     const lines = [];
     lines.push(h("div", { class: "tt-name", style: { color: RARITY[def.rarity].color }, text: def.name }));
@@ -179,11 +203,7 @@ export class InventoryUI {
     stats.push(["무게", formatWeight(itemWeight(item))], ["판매가", formatMoney(sellPrice(item))]);
     lines.push(h("div", { class: "tt-stats" }, stats.map(([k, v]) => h("div", {}, h("span", { text: k }), h("b", { text: v })))));
     if (def.desc) lines.push(h("div", { class: "tt-desc", text: def.desc }));
-    const hint = this.ctx.mode === "raid" ? "우클릭: 메뉴 · Shift+클릭: 빠른 이동 · 드래그 중 R: 회전" : this.ctx.mode === "trader" ? "Shift+클릭: 판매 · 우클릭: 메뉴 · 드래그 중 R: 회전" : "우클릭: 메뉴 · Shift+클릭: 빠른 이동 · 드래그 중 R: 회전";
-    lines.push(h("div", { class: "tt-hint", text: hint }));
-    tooltip.replaceChildren(...lines);
-    tooltip.classList.remove("hidden");
-    this.moveTooltip(e);
+    return lines;
   }
 
   moveTooltip(e) {
@@ -198,12 +218,16 @@ export class InventoryUI {
     tooltip.style.top = `${Math.max(8, y)}px`;
   }
 
-  openMenu(e, item, from) {
+  /** @param info 터치: 툴팁 대신 메뉴 위에 아이템 정보를 함께 보여준다 */
+  openMenu(e, item, from, { info = false } = {}) {
     hideTooltip();
-    const items = this.ctx.menuItems?.(item, from) ?? [];
-    if (!items.length) return;
+    const items = [...(this.ctx.menuItems?.(item, from) ?? [])];
+    const quick = info ? this.ctx.quickLabel?.(item, from) : null;
+    if (quick) items.unshift({ label: quick, action: () => this.ctx.quickMove?.(item, from) });
+    if (!items.length && !info) return;
+    menu.classList.toggle("with-info", info);
     menu.replaceChildren(
-      h("div", { class: "menu-title", text: ITEMS[item.id].name }),
+      info ? h("div", { class: "menu-info" }, this.infoLines(item)) : h("div", { class: "menu-title", text: ITEMS[item.id].name }),
       ...items.map((m) =>
         h("button", {
           class: m.danger ? "danger" : "",
@@ -219,38 +243,92 @@ export class InventoryUI {
     );
     menu.classList.remove("hidden");
     const r = menu.getBoundingClientRect();
-    menu.style.left = `${Math.min(e.clientX, window.innerWidth - r.width - 8)}px`;
-    menu.style.top = `${Math.min(e.clientY, window.innerHeight - r.height - 8)}px`;
+    menu.style.left = `${Math.max(8, Math.min(e.clientX, window.innerWidth - r.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(e.clientY, window.innerHeight - r.height - 8))}px`;
   }
 
   // ── 드래그 ─────────────────────────────────────────
 
   pointerDown(e, item, from) {
-    if (e.button !== 0) return;
-    e.preventDefault();
+    if (e.button !== 0 || this.pending || this.drag) return;
+    const touch = e.pointerType !== "mouse";
+    // 터치는 기본 동작(스크롤)을 막지 않는다. 길게 눌러야 끌기가 시작된다
+    if (!touch) e.preventDefault();
     hideMenu();
-    if (e.shiftKey || e.ctrlKey) {
+    if (!touch && (e.shiftKey || e.ctrlKey)) {
       this.ctx.quickMove?.(item, from);
       this.ctx.changed();
       return;
     }
-    this.pending = { item, from, x: e.clientX, y: e.clientY, el: e.currentTarget };
+    this.pending = { item, from, x: e.clientX, y: e.clientY, cx: e.clientX, cy: e.clientY, el: e.currentTarget, id: e.pointerId, touch, t: performance.now() };
+    if (touch) {
+      this.lastTouch = performance.now();
+      this.pending.timer = setTimeout(() => {
+        const p = this.pending;
+        if (!p || this.drag) return;
+        navigator.vibrate?.(12);
+        this.startDrag({ clientX: p.cx, clientY: p.cy });
+      }, LONG_PRESS_MS);
+    }
     window.addEventListener("pointermove", this.onMove);
     window.addEventListener("pointerup", this.onUp);
+    window.addEventListener("pointercancel", this.onCancel);
+  }
+
+  clearPending() {
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
+    this.pending = null;
+    window.removeEventListener("pointermove", this.onMove);
+    window.removeEventListener("pointerup", this.onUp);
+    window.removeEventListener("pointercancel", this.onCancel);
   }
 
   startDrag(e) {
-    const { item, from, el } = this.pending;
+    const { item, from, el, touch, id } = this.pending;
     hideTooltip();
+    hideMenu();
     const def = ITEMS[item.id];
     const ghost = h("div", { class: `drag-ghost item rarity-${def.rarity}` });
     ghost.append(h("img", { src: itemIcon(item.id), draggable: false }));
     document.body.append(ghost);
     const highlight = h("div", { class: "drop-highlight hidden" });
-    this.drag = { item, from, rot: item.rot, ghost, highlight, srcEl: el, target: null };
+    this.drag = { item, from, rot: item.rot, ghost, highlight, srcEl: el, target: null, touch, id };
     el.classList.add("dragging");
+    if (touch) {
+      // 다른 손가락으로 누르는 회전 버튼
+      const rotate = h("button", { class: "drag-rotate", text: "↻ 회전" });
+      rotate.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.rotateDrag();
+      });
+      if (def.w !== def.h) document.body.append(rotate);
+      this.drag.rotateBtn = rotate;
+    }
     this.layoutGhost();
-    this.pointerMove(e);
+    this.pointerMove({ clientX: e.clientX, clientY: e.clientY, pointerId: id });
+    if (touch) this.autoScroll();
+  }
+
+  /** 터치로 끌면서 화면 가장자리에 가면 그쪽으로 스크롤 */
+  autoScroll() {
+    const d = this.drag;
+    if (!d) return;
+    const { clientX: x, clientY: y } = this.lastPointer;
+    const edge = 56;
+    // 안쪽 스크롤 영역부터
+    for (const el of [...document.querySelectorAll(".stash-scroll, .hideout-content, .inv-wrap, .raid-inv")].reverse()) {
+      const r = el.getBoundingClientRect();
+      if (x < r.left || x > r.right || el.scrollHeight <= el.clientHeight + 1) continue;
+      const dy = y < r.top + edge ? -1 : y > r.bottom - edge ? 1 : 0;
+      if (dy) {
+        el.scrollTop += dy * 9;
+        d.target = this.computeTarget(x, y - TOUCH_GHOST_LIFT);
+        this.showHighlight(d.target);
+        break;
+      }
+    }
+    d.scrollRaf = requestAnimationFrame(() => this.autoScroll());
   }
 
   layoutGhost() {
@@ -279,20 +357,42 @@ export class InventoryUI {
   }
 
   pointerMove(e) {
+    const id = this.drag?.id ?? this.pending?.id;
+    if (id !== undefined && e.pointerId !== undefined && e.pointerId !== id) return;
     this.lastPointer = { clientX: e.clientX, clientY: e.clientY };
     if (this.pending && !this.drag) {
-      if (Math.hypot(e.clientX - this.pending.x, e.clientY - this.pending.y) < 5) return;
+      const p = this.pending;
+      p.cx = e.clientX;
+      p.cy = e.clientY;
+      const moved = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+      if (p.touch) {
+        // 길게 누르기 전에 손가락이 움직이면 스크롤로 본다
+        if (moved > 10) this.clearPending();
+        return;
+      }
+      if (moved < 5) return;
       this.startDrag(e);
       return;
     }
     const d = this.drag;
     if (!d) return;
+    const lift = d.touch ? TOUCH_GHOST_LIFT : 0;
     const gw = parseFloat(d.ghost.style.width);
     const gh = parseFloat(d.ghost.style.height);
     d.ghost.style.left = `${e.clientX - gw / 2}px`;
-    d.ghost.style.top = `${e.clientY - gh / 2}px`;
-    d.target = this.computeTarget(e.clientX, e.clientY);
+    d.ghost.style.top = `${e.clientY - lift - gh / 2}px`;
+    d.target = this.computeTarget(e.clientX, e.clientY - lift);
     this.showHighlight(d.target);
+  }
+
+  pointerCancel(e) {
+    const id = this.drag?.id ?? this.pending?.id;
+    if (e.pointerId !== id) return;
+    this.clearPending();
+    if (this.drag) {
+      this.cancelDrag();
+      this.ctx.changed();
+    }
   }
 
   computeTarget(x, y) {
@@ -327,10 +427,19 @@ export class InventoryUI {
           return { type: "load", weapon: occupant, el: dropEl, cell, valid: true, rect: occupant };
         }
       }
-      const [w, hh] = d.rot ? [def.h, def.w] : [def.w, def.h];
-      const gx = Math.round((x - rect.left) / cell - w / 2);
-      const gy = Math.round((y - rect.top) / cell - hh / 2);
-      return { type: "grid", grid: drop.grid, x: gx, y: gy, rot: d.rot, el: dropEl, cell, w, h: hh, valid: canPlace(drop.grid, item, gx, gy, d.rot) };
+      const place = (rot) => {
+        const [w, hh] = rot ? [def.h, def.w] : [def.w, def.h];
+        const gx = Math.round((x - rect.left) / cell - w / 2);
+        const gy = Math.round((y - rect.top) / cell - hh / 2);
+        return { type: "grid", grid: drop.grid, x: gx, y: gy, rot, el: dropEl, cell, w, h: hh, valid: canPlace(drop.grid, item, gx, gy, rot) };
+      };
+      const t = place(d.rot);
+      // 터치: 지금 방향으로 안 들어가면 돌려서라도 넣는다
+      if (!t.valid && d.touch && def.w !== def.h) {
+        const t2 = place(!d.rot);
+        if (t2.valid) return t2;
+      }
+      return t;
     }
     return null;
   }
@@ -354,12 +463,17 @@ export class InventoryUI {
     Object.assign(hl.style, { left: `${r.x * t.cell}px`, top: `${r.y * t.cell}px`, width: `${r.w * t.cell}px`, height: `${r.h * t.cell}px` });
   }
 
-  pointerUp() {
-    window.removeEventListener("pointermove", this.onMove);
-    window.removeEventListener("pointerup", this.onUp);
+  pointerUp(e) {
+    const id = this.drag?.id ?? this.pending?.id;
+    if (e && e.pointerId !== undefined && id !== undefined && e.pointerId !== id) return;
     const d = this.drag;
-    this.pending = null;
-    if (!d) return;
+    const pending = this.pending;
+    this.clearPending();
+    if (!d) {
+      // 터치 탭: 정보와 메뉴
+      if (pending?.touch && performance.now() - pending.t < LONG_PRESS_MS + 40) this.openMenu({ clientX: pending.x, clientY: pending.y }, pending.item, pending.from, { info: true });
+      return;
+    }
     const t = d.target;
     this.cancelDrag();
     if (!t || !t.valid) {
@@ -405,6 +519,8 @@ export class InventoryUI {
     if (!d) return;
     d.ghost.remove();
     d.highlight.remove();
+    d.rotateBtn?.remove();
+    if (d.scrollRaf) cancelAnimationFrame(d.scrollRaf);
     d.srcEl?.classList.remove("dragging");
     document.querySelectorAll(".drop-ok, .drop-bad").forEach((el) => el.classList.remove("drop-ok", "drop-bad"));
     this.drag = null;

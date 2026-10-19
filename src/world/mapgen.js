@@ -29,6 +29,7 @@ export function generateMap(def) {
   outdoorLoot(ctx);
   ensureConnectivity(ctx);
   pruneContainers(ctx);
+  lockRooms(ctx);
   finalizeExtracts(ctx);
   spawnPoints(ctx);
   m.roads = ctx.roads;
@@ -878,6 +879,65 @@ function pruneContainers(ctx) {
   });
 }
 
+// ── 잠긴 방 ────────────────────────────────────────────
+
+/** 문이 하나뿐인 방을 골라 잠그고, 좋은 상자를 넣는다. 별도 시드라 기존 지형은 그대로다 */
+function lockRooms(ctx) {
+  const { m, def } = ctx;
+  const want = def.lockedRooms ?? 0;
+  if (!want || !def.lock) return;
+  const rng = new Rng((def.seed ^ 0x5eed1234) >>> 0);
+  const lctx = { ...ctx, rng };
+  const candidates = [];
+  for (const b of m.buildings) {
+    for (const room of b.rooms) {
+      if (room.hall) continue;
+      const area = room.w * room.h;
+      if (area < 9 || area > 70) continue;
+      const openings = [];
+      const check = (x, y) => {
+        const t = m.tile(x, y);
+        if (t === T.NONE || t === T.DOOR) openings.push({ tx: x, ty: y, t });
+      };
+      for (let x = room.x - 1; x <= room.x + room.w; x++) {
+        check(x, room.y - 1);
+        check(x, room.y + room.h);
+      }
+      for (let y = room.y; y < room.y + room.h; y++) {
+        check(room.x - 1, y);
+        check(room.x + room.w, y);
+      }
+      if (openings.length === 1 && openings[0].t === T.DOOR) candidates.push({ b, room, door: openings[0] });
+    }
+  }
+  rng.shuffle(candidates);
+  const picked = [];
+  // 가능하면 서로 다른 건물에서
+  for (const c of candidates) if (picked.length < want && !picked.some((p) => p.b === c.b)) picked.push(c);
+  for (const c of candidates) if (picked.length < want && !picked.includes(c)) picked.push(c);
+
+  for (const { b, room, door } of picked) {
+    const i = m.idx(door.tx, door.ty);
+    m.locked[i] = 1;
+    m.doorOpen[i] = 0;
+    room.locked = true;
+    m.lockedRooms.push({ x: room.x, y: room.y, w: room.w, h: room.h, door: { tx: door.tx, ty: door.ty }, label: b.label });
+    const inside = (c) => c.tx >= room.x && c.tx < room.x + room.w && c.ty >= room.y && c.ty < room.y + room.h;
+    let n = m.containers.filter(inside).length;
+    for (let k = 0; n < 2 && k < 6; k++) {
+      if (placeWallContainer(lctx, room, rng.pick(["safe", "weaponbox", "medcab"]))) n += 1;
+    }
+    for (const c of m.containers) if (inside(c)) c.locked = true;
+  }
+  m.containers.forEach((c, idx) => {
+    c.id = `c${idx}`;
+  });
+}
+
+function inLockedRoom(m, tx, ty) {
+  return m.lockedRooms.some((r) => tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h);
+}
+
 function finalizeExtracts(ctx) {
   const { m, rng, reachable } = ctx;
   for (const spot of ctx.extractSpots) {
@@ -904,7 +964,7 @@ function finalizeExtracts(ctx) {
 function spawnPoints(ctx) {
   const { m, rng, reachable } = ctx;
   const inBuilding = (tx, ty) => m.buildings.some((b) => tx >= b.x && tx < b.x + b.w && ty >= b.y && ty < b.y + b.h);
-  const openTile = (tx, ty) => m.inBounds(tx, ty) && reachable[m.idx(tx, ty)] && m.tile(tx, ty) === T.NONE;
+  const openTile = (tx, ty) => m.inBounds(tx, ty) && reachable[m.idx(tx, ty)] && m.tile(tx, ty) === T.NONE && !inLockedRoom(m, tx, ty);
 
   // 플레이어 스폰: 가장자리 근처 야외
   const edgeCandidates = [];
@@ -924,10 +984,13 @@ function spawnPoints(ctx) {
   const enemy = [];
   for (const b of m.buildings) {
     for (const room of b.rooms) {
+      if (room.locked) continue;
       const cx = Math.floor(room.x + room.w / 2);
       const cy = Math.floor(room.y + room.h / 2);
       const p = m.nearestOpen(cx * TS + TS / 2, cy * TS + TS / 2, 3);
-      if (p && reachable[m.idx(Math.floor(p.x / TS), Math.floor(p.y / TS))]) enemy.push({ ...p, building: b.label, boss: !!b.boss });
+      if (p && reachable[m.idx(Math.floor(p.x / TS), Math.floor(p.y / TS))] && !inLockedRoom(m, Math.floor(p.x / TS), Math.floor(p.y / TS))) {
+        enemy.push({ ...p, building: b.label, boss: !!b.boss });
+      }
     }
   }
   for (let i = 0; i < 3000 && enemy.length < 70; i++) {

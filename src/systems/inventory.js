@@ -37,6 +37,7 @@ export function makeItem(id, count = 1, data = {}) {
   if (def.type === "weapon") item.data = { mag: 0, ammoId: null };
   if (def.type === "armor" || def.type === "helmet") item.data = { dur: def.dur };
   if (def.type === "med" && def.pool) item.data = { uses: def.uses };
+  if (def.type === "key") item.data = { uses: def.uses };
   if (def.type === "backpack") item.data = { grid: makeGrid(def.gw, def.gh, { noNest: true, kind: "backpack" }) };
   Object.assign(item.data, data);
   return item;

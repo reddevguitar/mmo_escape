@@ -10,19 +10,44 @@ import {
   addItem, removeItem, findSpot, placeAt, makeStacks, cloneGrid, countItem, takeItem,
   unloadWeapon, splitStack, sortGrid, slotAccepts, gridWeight, itemWeight, SLOT_TYPES,
 } from "../systems/inventory.js";
-import { playerLevel, xpForLevel, maxHp, traderTier, applyHideoutDims, MAX_LEVEL } from "../systems/profile.js";
+import { playerLevel, xpForLevel, maxHp, traderTier, applyHideoutDims, benchLevel, deliverMail, MAX_LEVEL } from "../systems/profile.js";
 import { questState, isQuestComplete, handover, claimQuest, readyQuestCount } from "../systems/quests.js";
+import { RECIPES, recipeStatus, craft } from "../systems/crafting.js";
+import { RECIPE_GROUPS } from "../data/recipes.js";
 import { InventoryUI, hideTooltip, hideMenu } from "./invui.js";
 import { itemIcon } from "./icons.js";
-import { drawDuck, playerDuckOpts } from "../game/draw.js";
+import { twoStepButton, responsiveCell } from "./widgets.js";
+import { drawDuck, playerDuckOpts, duckColors, DUCK_COLORS } from "../game/draw.js";
 import { audio } from "../game/audio.js";
 
 const TABS = [
   { id: "gear", name: "장비 · 창고" },
   { id: "trader", name: "상인" },
+  { id: "bench", name: "작업대" },
   { id: "quests", name: "의뢰" },
   { id: "upgrades", name: "시설" },
 ];
+
+/** 일괄 판매에서 빼야 하는 아이템: 진행 중인 의뢰, 다음 시설 업그레이드, 제작 재료 */
+function protectedItems(profile) {
+  const keep = new Set();
+  for (const q of QUESTS) {
+    const rec = profile.quests[q.id];
+    if (!rec || rec.state !== "active") continue;
+    q.goals.forEach((g, i) => {
+      if (g.type === "handover" && (rec.progress[i] ?? 0) < g.count) keep.add(g.item);
+    });
+  }
+  for (const key of UPGRADE_ORDER) {
+    const next = UPGRADES[key].levels[profile.hideout[key] + 1];
+    for (const [id] of next?.items ?? []) keep.add(id);
+  }
+  for (const r of RECIPES) {
+    for (const [id] of r.input) keep.add(id);
+    for (const id of r.tools ?? []) keep.add(id);
+  }
+  return keep;
+}
 
 export class Hideout {
   constructor(app) {
@@ -35,6 +60,11 @@ export class Hideout {
       cell: 44,
       mode: "hideout",
       quickMove: (item, from) => this.quickMove(item, from),
+      quickLabel: (item, from) => {
+        const inStash = from.type === "grid" && from.grid === this.profile.stash;
+        if (inStash) return this.tab === "trader" ? null : "가방으로 옮기기";
+        return "창고로 옮기기";
+      },
       menuItems: (item, from) => this.menuItems(item, from),
       canDropZone: (zone) => zone === "sell",
       onDropZone: (zone, item, from) => {
@@ -63,12 +93,45 @@ export class Hideout {
   render() {
     const scroller = this.root.querySelector(".stash-scroll");
     if (scroller) this.stashScroll = scroller.scrollTop;
+    const pageScroll = this.root.querySelector(".hideout-content")?.scrollTop ?? 0;
     this.inv.ctx.mode = this.tab === "trader" ? "trader" : "hideout";
-    const content =
-      this.tab === "gear" ? this.renderGear() : this.tab === "trader" ? this.renderTrader() : this.tab === "quests" ? this.renderQuests() : this.renderUpgrades();
-    this.root.replaceChildren(this.renderTopbar(), h("div", { class: "hideout-content" }, content));
+    this.inv.cell = responsiveCell(44);
+    const views = {
+      gear: () => this.renderGear(),
+      trader: () => this.renderTrader(),
+      bench: () => this.renderBench(),
+      quests: () => this.renderQuests(),
+      upgrades: () => this.renderUpgrades(),
+    };
+    const content = (views[this.tab] ?? views.gear)();
+    this.root.replaceChildren(this.renderTopbar(), h("div", { class: "hideout-content" }, this.mailBanner(), content));
     const s2 = this.root.querySelector(".stash-scroll");
     if (s2) s2.scrollTop = this.stashScroll;
+    const c2 = this.root.querySelector(".hideout-content");
+    if (c2) c2.scrollTop = pageScroll;
+  }
+
+  /** 우편함: 창고에 자리가 없어 못 받은 아이템 */
+  mailBanner() {
+    const mail = this.profile.mail ?? [];
+    if (!mail.length) return null;
+    return h(
+      "div",
+      { class: "mail-banner" },
+      h("span", { class: "mail-icon", text: "📬" }),
+      h("div", {}, h("b", { text: `우편함에 아이템 ${mail.length}개` }), h("small", { text: "창고가 가득 차서 못 받은 보상·전리품입니다. 자리를 만들고 받으세요." })),
+      h("div", { class: "mail-items" }, mail.slice(0, 6).map((it) => h("img", { src: itemIcon(it.id), title: ITEMS[it.id].name }))),
+      h("button", {
+        class: "small-btn",
+        text: "창고로 받기",
+        onclick: () => {
+          const r = deliverMail(this.profile);
+          if (r.delivered) this.app.toast(`${r.delivered}개를 창고로 옮겼습니다${r.left ? ` (남은 ${r.left}개)` : ""}`, "good");
+          else this.app.toast("창고에 빈 자리가 없습니다", "warn");
+          this.changed();
+        },
+      }),
+    );
   }
 
   // ── 상단 바 ─────────────────────────────────────────
@@ -127,7 +190,7 @@ export class Hideout {
       g.save();
       g.translate(110, 96);
       g.scale(3.2, 3.2);
-      drawDuck(g, 0, 0, -0.45, playerDuckOpts(eq, { moving: false }));
+      drawDuck(g, 0, 0, -0.45, playerDuckOpts(eq, { moving: false, colors: duckColors(p.settings.duckColor) }));
       g.restore();
     });
     const armorTxt = eq.armor ? `${ITEMS[eq.armor.id].cls}등급` : "없음";
@@ -148,6 +211,23 @@ export class Hideout {
           stat("소지 무게", formatWeight(weight), weight > 22 ? "warn" : ""),
           stat("방탄복", armorTxt),
           stat("헬멧", helmetTxt),
+          h(
+            "div",
+            { class: "color-chips", title: "오리 색" },
+            Object.entries(DUCK_COLORS).map(([key, c]) =>
+              h("button", {
+                class: `color-chip ${p.settings.duckColor === key ? "active" : ""}`,
+                title: c.name,
+                "aria-label": `오리 색: ${c.name}`,
+                style: { background: `linear-gradient(135deg, ${c.head} 0 45%, ${c.body} 45%)` },
+                onclick: () => {
+                  p.settings.duckColor = key;
+                  audio.ui();
+                  this.changed();
+                },
+              }),
+            ),
+          ),
         ),
       ),
       h("div", { class: "slots-row" }, this.inv.slotView(eq, "primary"), this.inv.slotView(eq, "secondary")),
@@ -187,7 +267,16 @@ export class Hideout {
           },
         }),
       ),
-      trader ? h("p", { class: "hint", text: "아이템을 왼쪽 판매 칸으로 끌어놓거나 Shift+클릭하면 판매합니다." }) : h("p", { class: "hint", text: "드래그로 이동 · 드래그 중 R 회전 · Shift+클릭 빠른 이동 · 탄약을 총 위에 놓으면 장전" }),
+      h("p", {
+        class: "hint",
+        text: this.app.touch
+          ? trader
+            ? "아이템을 탭해 판매하거나, 길게 눌러 판매 칸으로 끌어놓으세요."
+            : "탭: 정보·메뉴 · 길게 눌러 끌기 (끄는 중 ↻ 회전) · 탄약을 총 위에 놓으면 장전"
+          : trader
+            ? "아이템을 왼쪽 판매 칸으로 끌어놓거나 Shift+클릭하면 판매합니다."
+            : "드래그로 이동 · 드래그 중 R 회전 · Shift+클릭 빠른 이동 · 탄약을 총 위에 놓으면 장전",
+      }),
       h("div", { class: "stash-scroll" }, this.inv.gridView(p.stash)),
     );
   }
@@ -242,8 +331,107 @@ export class Hideout {
         ),
         h("div", { class: "offers" }, shown.map((o) => this.offerCard(o))),
         this.inv.zoneView("sell", "여기에 끌어놓아 판매 (판매가 = 가치의 60%)", "sell-zone"),
+        this.junkSellRow(),
       ),
       this.stashPanel({ trader: true }),
+    );
+  }
+
+  /** 창고의 '전리품' 중 의뢰·시설·제작에 안 쓰이는 것 */
+  junkItems() {
+    const keep = protectedItems(this.profile);
+    return this.profile.stash.items.filter((it) => {
+      const def = ITEMS[it.id];
+      return def.type === "loot" && def.rarity < 4 && !keep.has(it.id);
+    });
+  }
+
+  junkSellRow() {
+    const junk = this.junkItems();
+    if (!junk.length) return h("p", { class: "hint", text: "팔 만한 귀중품이 없습니다. (의뢰·시설·제작에 필요한 재료는 일괄 판매에서 빠집니다)" });
+    const total = junk.reduce((s, it) => s + sellPrice(it), 0);
+    return h(
+      "div",
+      { class: "junk-row" },
+      h("small", { text: `귀중품 ${junk.length}개 · ${formatMoney(total)} (의뢰·시설·제작 재료와 전설 등급은 제외)` }),
+      twoStepButton("small-btn", "귀중품 일괄 판매", `한 번 더 누르면 ${formatMoney(total)}에 판매`, () => {
+        let sum = 0;
+        for (const it of this.junkItems()) {
+          sum += sellPrice(it);
+          removeItem(this.profile.stash, it);
+        }
+        this.profile.money += sum;
+        audio.pickup();
+        this.app.toast(`귀중품 판매 (+${formatMoney(sum)})`, "good");
+        this.changed();
+      }),
+    );
+  }
+
+  // ── 작업대 ─────────────────────────────────────────
+
+  renderBench() {
+    const p = this.profile;
+    const bench = benchLevel(p);
+    const next = UPGRADES.bench.levels[p.hideout.bench + 1];
+    return h(
+      "div",
+      { class: "two-col" },
+      h(
+        "section",
+        { class: "panel bench" },
+        h(
+          "div",
+          { class: "panel-title" },
+          h("span", { text: `🛠️ ${UPGRADES.bench.levels[p.hideout.bench].label} · Lv.${bench}` }),
+          h("small", { text: next ? `시설 탭에서 ${next.label}(으)로 올리면 더 많은 제작법이 열립니다` : "모든 제작법 사용 가능" }),
+        ),
+        h("p", { class: "hint", text: "재료는 창고에서 꺼내 씁니다. 내용물이 든 가방이나 탄이 든 총은 재료로 쓰지 않습니다." }),
+        RECIPE_GROUPS.map((g) => {
+          const list = RECIPES.filter((r) => r.group === g.id);
+          return h("div", { class: "recipe-group" }, h("h4", { text: g.name }), h("div", { class: "recipes" }, list.map((r) => this.recipeCard(r))));
+        }),
+      ),
+      this.stashPanel(),
+    );
+  }
+
+  recipeCard(r) {
+    const st = recipeStatus(this.profile, r);
+    const [outId, outN] = r.out;
+    const def = ITEMS[outId];
+    return h(
+      "div",
+      { class: `recipe rarity-${def.rarity} ${st.locked ? "locked" : ""} ${st.ok ? "ready" : ""}` },
+      h("div", { class: "offer-icon" }, h("img", { src: itemIcon(outId), draggable: false })),
+      h(
+        "div",
+        { class: "recipe-info" },
+        h("b", { style: { color: RARITY[def.rarity].color }, text: `${def.name}${outN > 1 ? ` x${outN}` : ""}` }),
+        h(
+          "div",
+          { class: "recipe-inputs" },
+          st.inputs.map((i) => h("span", { class: `req ${i.have >= i.n ? "ok" : "no"}`, title: ITEMS[i.id].name }, h("img", { src: itemIcon(i.id) }), `${ITEMS[i.id].short} ${Math.min(i.have, 999)}/${i.n}`)),
+          st.tools.map((t) => h("span", { class: `req tool ${t.have ? "ok" : "no"}`, title: `${ITEMS[t.id].name} (소모되지 않음)` }, h("img", { src: itemIcon(t.id) }), `도구 ${ITEMS[t.id].short}`)),
+        ),
+      ),
+      st.locked
+        ? h("span", { class: "lock", text: `🔒 작업대 Lv.${r.bench}` })
+        : h("button", {
+            class: `buy ${st.ok ? "" : "poor"}`,
+            text: `제작 ${formatMoney(r.cost ?? 0)}`,
+            disabled: !st.ok,
+            onclick: () => {
+              const res = craft(this.profile, r.id);
+              if (res.ok) {
+                audio.reveal(def.rarity);
+                this.app.toast(`${res.name}${res.count > 1 ? ` x${res.count}` : ""} 제작 완료`, "good");
+              } else {
+                this.app.toast(res.msg, "warn");
+              }
+              this.changed();
+            },
+          }),
     );
   }
 
@@ -495,7 +683,7 @@ export class Hideout {
               const r = claimQuest(p, q.id);
               if (r.ok) {
                 audio.reveal(3);
-                this.app.toast(`의뢰 완료: ${q.name}`, "good");
+                this.app.toast(`의뢰 완료: ${q.name}${r.mailed ? ` (창고가 가득 차 ${r.mailed}개는 우편함으로)` : ""}`, "good");
               } else this.app.toast(r.msg, "warn");
               this.changed();
             },

@@ -6,7 +6,10 @@ import { ENEMY_TYPES } from "../data/enemies.js";
 import { h } from "../core/dom.js";
 import { formatMoney, formatTime } from "../core/util.js";
 import { playerLevel } from "../systems/profile.js";
+import { scavCooldownLeft } from "../systems/scav.js";
+import { itemIcon } from "./icons.js";
 import { audio } from "../game/audio.js";
+import { twoStepButton, touchMode } from "./widgets.js";
 
 export const CONTROLS = [
   ["WASD", "이동"],
@@ -25,31 +28,19 @@ export const CONTROLS = [
   ["Esc", "일시정지"],
 ];
 
-/**
- * 되돌릴 수 없는 동작용 버튼: 첫 클릭은 경고만, 3초 안에 다시 누르면 실행.
- * (브라우저 confirm 창은 임베드 환경에서 막힐 수 있어 페이지 안에서 확인한다)
- */
-function twoStepButton(cls, label, armedLabel, action) {
-  let timer = null;
-  const btn = h("button", { class: cls, text: label });
-  btn.addEventListener("click", () => {
-    if (btn.classList.contains("armed")) {
-      clearTimeout(timer);
-      action();
-      return;
-    }
-    btn.classList.add("armed");
-    btn.textContent = armedLabel;
-    timer = setTimeout(() => {
-      btn.classList.remove("armed");
-      btn.textContent = label;
-    }, 3000);
-  });
-  return btn;
-}
+export const TOUCH_CONTROLS = [
+  ["왼쪽 스틱", "이동 (끝까지 밀면 달리기)"],
+  ["오른쪽 스틱", "조준 · 바깥 원까지 밀면 사격"],
+  ["🎯", "정밀 조준 켜기/끄기"],
+  ["↻ / ⇄", "재장전 / 무기 교체"],
+  ["손", "수색 / 문 열기"],
+  ["🎒 / 🗺", "인벤토리 / 지도"],
+  ["아이템 탭", "메뉴 (사용·장착·이동)"],
+  ["길게 눌러 끌기", "아이템 옮기기 (↻ 버튼으로 회전)"],
+];
 
-function controlsList() {
-  return h("div", { class: "controls-list" }, CONTROLS.map(([k, v]) => h("div", {}, h("kbd", { text: k }), h("span", { text: v }))));
+function controlsList(touch = touchMode()) {
+  return h("div", { class: "controls-list" }, (touch ? TOUCH_CONTROLS : CONTROLS).map(([k, v]) => h("div", {}, h("kbd", { text: k }), h("span", { text: v }))));
 }
 
 export function titleScreen({ profile, onContinue, onNew }) {
@@ -100,7 +91,7 @@ export function titleScreen({ profile, onContinue, onNew }) {
         h("li", { text: "전리품을 팔아 더 좋은 장비를 사고, 의뢰와 시설로 성장하세요." }),
       ),
       controlsList(),
-      h("p", { class: "hint", text: "키보드와 마우스가 필요한 PC용 게임입니다. 진행 상황은 이 브라우저에 자동 저장됩니다." }),
+      h("p", { class: "hint", text: "PC는 키보드·마우스, 휴대폰·태블릿은 화면 터치로 플레이합니다. 진행 상황은 이 브라우저에 자동 저장됩니다." }),
     ),
   );
 }
@@ -108,6 +99,7 @@ export function titleScreen({ profile, onContinue, onNew }) {
 export function deployModal({ profile, onDeploy, onClose }) {
   const level = playerLevel(profile);
   let selected = MAP_ORDER.find((id) => level >= MAPS[id].minLevel && id === (profile.lastResult?.mapId ?? "farm")) ?? "farm";
+  let mode = "pmc";
   const eq = profile.equip;
   const warnings = [];
   if (!eq.primary && !eq.secondary) warnings.push("무기가 없습니다. 부리로 쪼는 것밖에 못 합니다!");
@@ -162,40 +154,99 @@ export function deployModal({ profile, onDeploy, onClose }) {
     );
   };
   renderCards();
-  deployBtn.onclick = () => onDeploy(selected);
+  deployBtn.onclick = () => {
+    if (mode === "scav" && scavCooldownLeft(profile) > 0) return;
+    onDeploy(selected, mode);
+  };
 
   const slotName = (it) => (it ? ITEMS[it.id].name : "—");
-  return h(
+  const pmcInfo = h(
+    "div",
+    { class: "mode-info" },
+    h(
+      "div",
+      { class: "loadout" },
+      h("div", {}, h("small", { text: "주무기" }), h("b", { text: slotName(eq.primary) })),
+      h("div", {}, h("small", { text: "보조무기" }), h("b", { text: slotName(eq.secondary) })),
+      h("div", {}, h("small", { text: "방탄복" }), h("b", { text: slotName(eq.armor) })),
+      h("div", {}, h("small", { text: "헬멧" }), h("b", { text: slotName(eq.helmet) })),
+      h("div", {}, h("small", { text: "가방" }), h("b", { text: slotName(eq.backpack) })),
+    ),
+    warnings.length ? h("ul", { class: "warnings" }, warnings.map((w) => h("li", { text: `⚠ ${w}` }))) : h("p", { class: "ok-line", text: "✔ 준비 완료" }),
+    h("p", { class: "hint", text: "레이드 중 페이지를 닫거나 새로고침하면 실종(사망) 처리됩니다." }),
+  );
+  const cooldownText = h("b");
+  const scavInfo = h(
+    "div",
+    { class: "mode-info scav-info hidden" },
+    h(
+      "ul",
+      { class: "scav-points" },
+      h("li", { text: "무작위 무기·장비를 받아 나갑니다. 은신처 장비는 그대로 둡니다." }),
+      h("li", { text: "떠돌이 오리들은 같은 편입니다. 먼저 쏘면 근처 떠돌이들이 적이 됩니다. (용병·고양이·거위는 여전히 적)" }),
+      h("li", { text: "죽어도 잃는 것이 없습니다. 탈출하면 들고 나온 것을 전부 가집니다. 창고가 차면 우편함으로 갑니다." }),
+      h("li", { text: "보안 컨테이너는 가져갈 수 없습니다." }),
+    ),
+    h("p", { class: "cooldown" }, "다음 떠돌이 출격: ", cooldownText),
+  );
+  const tabs = h("div", { class: "mode-tabs" });
+  const renderTabs = () => {
+    const left = scavCooldownLeft(profile);
+    cooldownText.textContent = left > 0 ? `${formatTime(left / 1000)} 후 가능` : "지금 가능";
+    pmcInfo.classList.toggle("hidden", mode !== "pmc");
+    scavInfo.classList.toggle("hidden", mode !== "scav");
+    deployBtn.disabled = mode === "scav" && left > 0;
+    deployBtn.textContent = mode === "scav" ? "떠돌이로 출격!" : "출격!";
+    tabs.replaceChildren(
+      h("button", { class: `mode-tab ${mode === "pmc" ? "active" : ""}`, onclick: () => ((mode = "pmc"), renderTabs()) }, h("b", { text: "🦆 오리 출격" }), h("small", { text: "내 장비로, 죽으면 잃는다" })),
+      h(
+        "button",
+        { class: `mode-tab ${mode === "scav" ? "active" : ""}`, onclick: () => ((mode = "scav"), renderTabs()) },
+        h("b", { text: "🎲 떠돌이 출격" }),
+        h("small", { text: left > 0 ? `대기 ${formatTime(left / 1000)}` : "무료 장비, 손실 없음" }),
+      ),
+    );
+  };
+  renderTabs();
+  const modal = h(
     "div",
     { class: "modal-backdrop" },
     h(
       "div",
       { class: "modal deploy" },
-      h("h2", { text: "출격 지역 선택" }),
+      h("h2", { text: "출격" }),
+      tabs,
       cards,
-      h(
-        "div",
-        { class: "loadout" },
-        h("div", {}, h("small", { text: "주무기" }), h("b", { text: slotName(eq.primary) })),
-        h("div", {}, h("small", { text: "보조무기" }), h("b", { text: slotName(eq.secondary) })),
-        h("div", {}, h("small", { text: "방탄복" }), h("b", { text: slotName(eq.armor) })),
-        h("div", {}, h("small", { text: "헬멧" }), h("b", { text: slotName(eq.helmet) })),
-        h("div", {}, h("small", { text: "가방" }), h("b", { text: slotName(eq.backpack) })),
-      ),
-      warnings.length ? h("ul", { class: "warnings" }, warnings.map((w) => h("li", { text: `⚠ ${w}` }))) : h("p", { class: "ok-line", text: "✔ 준비 완료" }),
-      h("p", { class: "hint", text: "레이드 중 페이지를 닫거나 새로고침하면 실종(사망) 처리됩니다." }),
+      pmcInfo,
+      scavInfo,
       h("div", { class: "modal-buttons" }, h("button", { class: "ghost-btn", text: "취소", onclick: onClose }), deployBtn),
     ),
   );
+  // 대기 시간 표시 갱신 (모달이 닫히면 멈춘다)
+  const timer = setInterval(() => {
+    if (!modal.isConnected) {
+      clearInterval(timer);
+      return;
+    }
+    if (mode === "scav" || scavCooldownLeft(profile) > 0) renderTabs();
+  }, 1000);
+  return modal;
 }
 
 export function resultsScreen({ result, summary, onContinue }) {
-  const titles = {
-    extracted: ["탈출 성공!", "살아서 돌아왔습니다. 가져온 전리품은 모두 당신의 것입니다."],
-    dead: ["사망", "가져간 장비를 모두 잃었습니다. 보안 컨테이너만 무사합니다."],
-    mia: ["실종 (MIA)", "탈출하지 못했습니다. 가져간 장비를 모두 잃었습니다."],
-  };
+  const titles = result.scav
+    ? {
+        extracted: ["탈출 성공!", "떠돌이로 들고 나온 것은 전부 당신의 것입니다."],
+        dead: ["사망", "떠돌이 출격이라 잃은 것은 없습니다."],
+        mia: ["실종 (MIA)", "떠돌이 출격이라 잃은 것은 없습니다."],
+      }
+    : {
+        extracted: ["탈출 성공!", "살아서 돌아왔습니다. 가져온 전리품은 모두 당신의 것입니다."],
+        dead: ["사망", "가져간 장비를 모두 잃었습니다. 보안 컨테이너만 무사합니다."],
+        mia: ["실종 (MIA)", "탈출하지 못했습니다. 가져간 장비를 모두 잃었습니다."],
+      };
   const [title, desc] = titles[result.status];
+  const newItems = result.newItems ?? [];
   const kills = {};
   for (const k of result.kills) kills[k.name] = (kills[k.name] ?? 0) + 1;
   const gained = result.endValue - result.startValue;
@@ -220,6 +271,22 @@ export function resultsScreen({ result, summary, onContinue }) {
         cell("반출 가치", result.status === "extracted" ? `${formatMoney(result.endValue)} (${gained >= 0 ? "+" : ""}${formatMoney(gained)})` : "$0"),
       ),
       Object.keys(kills).length ? h("div", { class: "kill-list" }, Object.entries(kills).map(([n, c]) => h("span", { text: `${n} x${c}` }))) : null,
+      newItems.length
+        ? h(
+            "div",
+            { class: "loot-list" },
+            h("h4", { text: `새로 얻은 전리품 ${newItems.length}종` }),
+            h(
+              "div",
+              { class: "loot-chips" },
+              newItems.slice(0, 14).map((it) =>
+                h("span", { class: `loot-chip rarity-${ITEMS[it.id].rarity}`, title: ITEMS[it.id].name }, h("img", { src: itemIcon(it.id) }), `${ITEMS[it.id].short}${it.count > 1 ? ` x${it.count}` : ""}`),
+              ),
+              newItems.length > 14 ? h("span", { class: "loot-more", text: `외 ${newItems.length - 14}종` }) : null,
+            ),
+          )
+        : null,
+      summary.mailed ? h("div", { class: "mail-note", text: `📬 창고에 자리가 없어 ${summary.mailed}개는 우편함에 있습니다.` }) : null,
       h(
         "div",
         { class: "xp-box" },
@@ -239,12 +306,15 @@ function cell(label, value) {
   return h("div", { class: "rcell" }, h("small", { text: label }), h("b", { text: value }));
 }
 
-export function pauseModal({ profile, onResume, onAbandon, onVolume, onToggleNumbers }) {
+export function pauseModal({ profile, scav = false, onResume, onAbandon, onVolume, onToggleNumbers, onToggleSoundMarkers }) {
   const vol = h("input", { type: "range", min: 0, max: 1, step: 0.05, value: String(profile.settings.volume) });
   vol.addEventListener("input", () => onVolume(Number(vol.value)));
   const nums = h("input", { type: "checkbox" });
   nums.checked = profile.settings.damageNumbers;
   nums.addEventListener("change", () => onToggleNumbers(nums.checked));
+  const marks = h("input", { type: "checkbox" });
+  marks.checked = profile.settings.soundMarkers !== false;
+  marks.addEventListener("change", () => onToggleSoundMarkers?.(marks.checked));
   return h(
     "div",
     { class: "modal-backdrop" },
@@ -254,11 +324,14 @@ export function pauseModal({ profile, onResume, onAbandon, onVolume, onToggleNum
       h("h2", { text: "일시정지" }),
       h("label", { class: "setting" }, h("span", { text: "음량" }), vol),
       h("label", { class: "setting" }, h("span", { text: "피해 숫자 표시" }), nums),
+      h("label", { class: "setting" }, h("span", { text: "소리 방향 표시" }), marks),
       controlsList(),
       h(
         "div",
         { class: "modal-buttons" },
-        twoStepButton("ghost-btn danger", "레이드 포기 (실종 처리)", "한 번 더 누르면 장비를 모두 잃고 포기합니다", onAbandon),
+        scav
+          ? twoStepButton("ghost-btn danger", "레이드 포기 (떠돌이 — 손실 없음)", "한 번 더 누르면 포기합니다. 들고 있는 것은 두고 갑니다", onAbandon)
+          : twoStepButton("ghost-btn danger", "레이드 포기 (실종 처리)", "한 번 더 누르면 장비를 모두 잃고 포기합니다", onAbandon),
         h("button", { class: "big-btn", text: "계속하기", onclick: onResume }),
       ),
     ),
@@ -266,6 +339,7 @@ export function pauseModal({ profile, onResume, onAbandon, onVolume, onToggleNum
 }
 
 export function tutorialModal({ onClose }) {
+  const touch = touchMode();
   return h(
     "div",
     { class: "modal-backdrop" },
@@ -276,10 +350,14 @@ export function tutorialModal({ onClose }) {
       h(
         "div",
         { class: "tut-steps" },
-        step("🎒", "장비 · 창고", "창고의 아이템을 끌어서 장비 슬롯/가방/주머니에 넣으세요. 드래그 중 R로 회전, 탄약을 총 위에 떨어뜨리면 장전됩니다."),
-        step("🔫", "출격", "레이드에 들고 간 것은 죽으면 모두 잃습니다. 꼭 필요한 것만, 그리고 예비 탄약과 붕대는 반드시!"),
-        step("📦", "수색", "상자·시체 근처에서 F를 누르면 수색이 시작됩니다. 아이템은 하나씩 드러나고, 그동안에도 적은 움직입니다."),
-        step("🚪", "탈출", "우측 상단의 탈출 지점 중 하나로 가서 7초간 버티세요. 시간이 다 되면 실종 처리됩니다."),
+        touch
+          ? step("🎒", "장비 · 창고", "아이템을 탭하면 정보와 메뉴(장착·옮기기·판매)가 나옵니다. 길게 눌러 끌면 원하는 칸에 놓을 수 있고, 끄는 동안 ↻ 버튼으로 돌립니다.")
+          : step("🎒", "장비 · 창고", "창고의 아이템을 끌어서 장비 슬롯/가방/주머니에 넣으세요. 드래그 중 R로 회전, 탄약을 총 위에 떨어뜨리면 장전됩니다."),
+        touch
+          ? step("🕹️", "조작", "왼쪽 스틱으로 이동(끝까지 밀면 달리기), 오른쪽 스틱으로 조준합니다. 오른쪽 스틱을 바깥 원까지 밀면 사격!")
+          : step("🔫", "출격", "레이드에 들고 간 것은 죽으면 모두 잃습니다. 꼭 필요한 것만, 그리고 예비 탄약과 붕대는 반드시!"),
+        step("📦", "수색", touch ? "상자·시체 가까이에서 화면의 ✋ 안내를 누르면 수색이 시작됩니다. 아이템은 하나씩 드러나고, 그동안에도 적은 움직입니다." : "상자·시체 근처에서 F를 누르면 수색이 시작됩니다. 아이템은 하나씩 드러나고, 그동안에도 적은 움직입니다."),
+        step("🚪", "탈출", "오른쪽 위 탈출 지점 중 하나로 가서 7초간 버티세요. 시간이 다 되면 실종 처리됩니다. 죽으면 들고 간 것은 모두 잃습니다."),
         step("🔒", "보안 컨테이너", "보안 컨테이너 안의 물건은 죽어도 남습니다. 비싼 전리품은 여기에!"),
         step("📈", "성장", "전리품을 상인에게 팔고, 의뢰를 완료하고, 시설을 업그레이드하세요. 레벨이 오르면 상인이 더 좋은 물건을 팝니다."),
       ),

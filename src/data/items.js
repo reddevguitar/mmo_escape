@@ -22,6 +22,7 @@ export const TYPE_NAMES = {
   food: "식량",
   grenade: "투척물",
   loot: "전리품",
+  key: "열쇠",
 };
 
 export const CALIBERS = {
@@ -289,6 +290,19 @@ const defs = {
   duckcoin: { name: "덕코인", short: "₿", type: "loot", w: 1, h: 1, weight: 0.05, value: 80000, rarity: 3, icon: "🪙", desc: "오리들의 암호화폐." },
   gpu: { name: "그래픽카드", short: "GPU", type: "loot", w: 2, h: 1, weight: 0.9, value: 125000, rarity: 4, icon: "draw:gpu", desc: "덕코인 채굴용. 매우 비싸다." },
   golden_egg: { name: "황금 거위알", short: "황금알", type: "loot", w: 2, h: 2, weight: 1.5, value: 360000, rarity: 4, icon: "draw:egg", desc: "대왕 거위가 품고 있던 황금알." },
+  cat_bell: { name: "고양이 방울", short: "방울", type: "loot", w: 1, h: 1, weight: 0.05, value: 5200, rarity: 1, icon: "🔔", desc: "들고양이 목에 걸려 있던 방울. 딸랑." },
+
+  // ── 열쇠 (사용 횟수 제한) ─────────────────────────────
+  key_farm: {
+    name: "농가 창고 열쇠", short: "열쇠", type: "key", lock: "farm", uses: 5,
+    w: 1, h: 1, weight: 0.05, value: 16000, rarity: 2, icon: "🔑",
+    desc: "갈대 농장(주간·야간)의 잠긴 창고 방을 연다. 5번 쓸 수 있다.",
+  },
+  key_factory: {
+    name: "공장 사무실 키카드", short: "키카드", type: "key", lock: "factory", uses: 5,
+    w: 1, h: 1, weight: 0.02, value: 42000, rarity: 3, icon: "💳",
+    desc: "폐공장 지대의 잠긴 사무실을 연다. 5번 쓸 수 있다.",
+  },
 };
 
 for (const [id, def] of Object.entries(defs)) {
@@ -313,7 +327,7 @@ export function sellPrice(item) {
     const dur = item.data?.dur ?? def.dur;
     value *= 0.3 + 0.7 * (dur / def.dur);
   }
-  if (def.pool) {
+  if (def.pool || def.type === "key") {
     value *= 0.25 + 0.75 * ((item.data?.uses ?? def.uses) / def.uses);
   }
   let total = value * SELL_MUL * (item.count ?? 1);

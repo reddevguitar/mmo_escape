@@ -80,14 +80,14 @@ export class Pathfinder {
   }
 
   /** 월드 좌표 → 월드 좌표 경로 (타일 중심점 배열). 실패 시 가장 가까이 간 지점까지 */
-  find(sx, sy, ex, ey, maxNodes = 3500) {
+  find(sx, sy, ex, ey, maxNodes = 3500, allowDoors = true) {
     const m = this.map;
     const w = m.w;
     let stx = Math.floor(sx / TS);
     let sty = Math.floor(sy / TS);
     let etx = Math.floor(ex / TS);
     let ety = Math.floor(ey / TS);
-    if (!m.isWalkableForAI(etx, ety)) {
+    if (!m.isWalkableForAI(etx, ety, allowDoors)) {
       const near = m.nearestOpen(ex, ey, 4);
       if (!near) return null;
       etx = Math.floor(near.x / TS);
@@ -125,9 +125,9 @@ export class Pathfinder {
       for (const [dx, dy, cost] of DIRS) {
         const nx = cx + dx;
         const ny = cy + dy;
-        if (!m.isWalkableForAI(nx, ny)) continue;
+        if (!m.isWalkableForAI(nx, ny, allowDoors)) continue;
         if (dx !== 0 && dy !== 0) {
-          if (!m.isWalkableForAI(cx + dx, cy) || !m.isWalkableForAI(cx, cy + dy)) continue;
+          if (!m.isWalkableForAI(cx + dx, cy, allowDoors) || !m.isWalkableForAI(cx, cy + dy, allowDoors)) continue;
           // 문은 대각선으로 통과하지 않는다
           if (m.isDoor(nx, ny) || m.isDoor(cx, cy)) continue;
         }

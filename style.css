@@ -1855,6 +1855,7 @@ body[data-state="raid"] #screen {
 
 .raid-inv {
   position: absolute;
+  z-index: 5;
   inset: 0;
   display: flex;
   flex-direction: column;
@@ -1969,4 +1970,972 @@ body[data-state="raid"] #screen {
   border-color: var(--bad);
   background: rgba(255, 107, 94, 0.18);
   color: #fff;
+}
+
+/* ── 출격: 일반 / 떠돌이 ─────────────────── */
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.mode-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  text-align: left;
+}
+
+.mode-tab b {
+  font-size: 15px;
+}
+
+.mode-tab small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mode-tab.active {
+  border-color: var(--accent);
+  background: rgba(255, 207, 63, 0.1);
+}
+
+.scav-points {
+  margin: 14px 0 6px;
+  padding-left: 20px;
+  color: #d4dbe1;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.cooldown {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.cooldown b {
+  color: var(--accent);
+}
+
+/* ── 결과: 새 전리품 ─────────────────────── */
+
+.loot-list {
+  margin: 14px 0 6px;
+  text-align: left;
+}
+
+.loot-list h4 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.loot-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.loot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.loot-chip img {
+  width: 26px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.loot-chip.rarity-1 {
+  border-color: rgba(95, 191, 106, 0.55);
+}
+
+.loot-chip.rarity-2 {
+  border-color: rgba(79, 157, 232, 0.6);
+}
+
+.loot-chip.rarity-3 {
+  border-color: rgba(176, 110, 240, 0.65);
+}
+
+.loot-chip.rarity-4 {
+  border-color: rgba(240, 178, 60, 0.8);
+  box-shadow: 0 0 10px rgba(240, 178, 60, 0.3);
+}
+
+.loot-more {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mail-note {
+  margin: 8px 0;
+  color: #ffd59a;
+  font-size: 13px;
+}
+
+/* ── 은신처: 우편함, 오리 색, 일괄 판매, 작업대 ── */
+
+.mail-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 207, 63, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 207, 63, 0.08);
+}
+
+.mail-banner > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.mail-banner small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mail-icon {
+  font-size: 26px;
+}
+
+.mail-items {
+  display: flex;
+  gap: 4px;
+}
+
+.mail-items img {
+  width: 30px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.color-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.color-chip {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+}
+
+.color-chip.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 207, 63, 0.35);
+}
+
+.junk-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.junk-row small {
+  color: var(--muted);
+}
+
+.recipe-group h4 {
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recipes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.recipe {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.recipe.ready {
+  border-color: rgba(111, 220, 140, 0.4);
+}
+
+.recipe.locked {
+  opacity: 0.55;
+}
+
+.recipe-info {
+  min-width: 0;
+}
+
+.recipe-info b {
+  display: block;
+  font-size: 13px;
+}
+
+.recipe-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.req {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px 1px 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.req img {
+  width: 20px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.req.ok {
+  color: #b6f2c5;
+}
+
+.req.no {
+  color: #ff9d94;
+}
+
+.req.tool {
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+}
+
+/* ── 레이드: 떠돌이 표시, 모두 가져가기, 잠긴 문 ── */
+
+.scav-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(111, 220, 140, 0.25);
+  color: #b6f2c5;
+  font-size: 11px;
+}
+
+.take-all {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(111, 220, 140, 0.45);
+  border-radius: 8px;
+  background: rgba(111, 220, 140, 0.14);
+  color: #b6f2c5;
+  font-weight: 800;
+}
+
+.take-all:hover {
+  background: rgba(111, 220, 140, 0.26);
+}
+
+.prompt.locked {
+  color: #ffd59a;
+}
+
+.prompt.locked kbd {
+  opacity: 0.4;
+}
+
+.inv-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.inv-close {
+  padding: 6px 16px;
+}
+
+.qs.empty {
+  opacity: 0.55;
+}
+
+/* 미니맵(오른쪽 위) 아래로 탈출 목록을 내린다 */
+.hud-tr {
+  top: 196px;
+  width: 200px;
+}
+
+@media (max-width: 760px), (max-height: 500px) {
+  .hud-tr {
+    top: 146px;
+    width: 150px;
+    padding: 6px 8px;
+  }
+
+  .extract-list .x {
+    font-size: 11px;
+  }
+
+  .hud-help {
+    display: none;
+  }
+}
+
+/* ── 아이템 메뉴(터치), 끄는 중 회전 버튼 ───── */
+
+.ctx-menu.with-info {
+  width: min(280px, calc(100vw - 16px));
+}
+
+.menu-info {
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.drag-rotate {
+  position: fixed;
+  left: 50%;
+  top: max(14px, env(safe-area-inset-top));
+  z-index: 1001;
+  transform: translateX(-50%);
+  padding: 12px 22px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: rgba(20, 26, 32, 0.95);
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 800;
+  touch-action: none;
+}
+
+/* ── 터치 조작 ─────────────────────────────── */
+
+.touch-layer {
+  display: none;
+}
+
+body.touch .touch-layer {
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.stick {
+  --r: 54px;
+  position: absolute;
+  width: calc(var(--r) * 2);
+  height: calc(var(--r) * 2);
+  margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(8, 12, 16, 0.28);
+  pointer-events: none;
+}
+
+.stick i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.stick small {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-top: 4px;
+  transform: translateX(-50%);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #000;
+}
+
+/* 손을 대지 않았을 때 자리 안내 */
+.stick.idle {
+  opacity: 0.45;
+}
+
+.stick.move.idle {
+  left: calc(110px + env(safe-area-inset-left));
+  top: calc(100% - 120px - env(safe-area-inset-bottom));
+}
+
+.stick.aim.idle {
+  left: calc(100% - 290px - env(safe-area-inset-right));
+  top: calc(100% - 160px - env(safe-area-inset-bottom));
+}
+
+.stick:not(.idle) small {
+  display: none;
+}
+
+/* 조준 스틱의 사격 구역(바깥쪽 링) */
+.stick.aim {
+  background: radial-gradient(circle, rgba(8, 12, 16, 0.28) 61%, rgba(255, 107, 94, 0.22) 62%);
+}
+
+.stick.aim.fire {
+  border-color: rgba(255, 107, 94, 0.9);
+}
+
+.stick.aim.fire i {
+  background: rgba(255, 120, 100, 0.85);
+}
+
+.stick.move.sprint {
+  border-color: rgba(255, 207, 63, 0.9);
+}
+
+.stick.move.sprint i {
+  background: rgba(255, 217, 85, 0.85);
+}
+
+.tbtns {
+  position: absolute;
+  right: calc(12px + env(safe-area-inset-right));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(3, 58px);
+  grid-auto-rows: 58px;
+  gap: 8px;
+}
+
+.tbtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 58px;
+  height: 58px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  background: rgba(8, 12, 16, 0.55);
+  color: #fff;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tbtn .ti {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.tbtn small {
+  margin-top: 1px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.tbtn:active {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.tbtn.on {
+  border-color: var(--accent);
+  background: rgba(255, 207, 63, 0.3);
+}
+
+.tbtn.pause {
+  position: absolute;
+  left: calc(10px + env(safe-area-inset-left));
+  top: calc(10px + env(safe-area-inset-top));
+  width: 44px;
+  height: 44px;
+}
+
+.tbtn.pause .ti {
+  font-size: 18px;
+}
+
+.tbtn-map {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  touch-action: none;
+}
+
+/* 터치일 때 HUD 배치: 체력은 위 가운데, 무기는 버튼 위, 퀵슬롯은 아래 가운데 */
+body.touch .hud-tl {
+  left: calc(62px + env(safe-area-inset-left));
+  top: 10px;
+}
+
+body.touch .raid-timer {
+  font-size: 22px;
+}
+
+body.touch .feed {
+  font-size: 12px;
+  max-width: 46vw;
+}
+
+body.touch .hud-bl {
+  left: 50%;
+  top: 8px;
+  bottom: auto;
+  width: min(220px, 30vw);
+  padding: 6px 10px;
+  transform: translateX(-50%);
+}
+
+body.touch .mini-labels,
+body.touch .hud-help {
+  display: none;
+}
+
+body.touch .st small {
+  display: none;
+}
+
+/* 무기 정보는 미니맵 왼쪽 */
+body.touch .hud-br {
+  top: 10px;
+  right: calc(146px + env(safe-area-inset-right));
+  bottom: auto;
+  min-width: 0;
+  padding: 4px 10px;
+}
+
+body.touch .w-ammo {
+  font-size: 22px;
+}
+
+body.touch .w-sub {
+  display: none;
+}
+
+body.touch .hud-bc {
+  bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+body.touch .quickslots {
+  pointer-events: auto;
+}
+
+body.touch .qs {
+  width: 52px;
+  height: 52px;
+  touch-action: none;
+}
+
+body.touch .hud-center {
+  top: auto;
+  bottom: calc(80px + env(safe-area-inset-bottom));
+}
+
+body.touch .prompt {
+  pointer-events: auto;
+  padding: 12px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  font-size: 15px;
+  touch-action: none;
+}
+
+body.touch .prompt kbd {
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+}
+
+body.touch .raid-banner {
+  top: 30%;
+  padding: 10px 18px;
+}
+
+body.touch .raid-banner b {
+  font-size: 22px;
+}
+
+/* 아주 작은 세로 화면에서는 버튼을 2열로 */
+@media (max-width: 480px) {
+  .tbtns {
+    grid-template-columns: repeat(2, 54px);
+    grid-auto-rows: 54px;
+  }
+
+  .tbtn {
+    width: 54px;
+    height: 54px;
+  }
+
+  /* 세로 화면: 체력은 위 가운데 넓게, 무기는 버튼 위 */
+  body.touch .hud-bl {
+    width: min(220px, 46vw);
+    left: auto;
+    right: calc(146px + env(safe-area-inset-right));
+    transform: none;
+  }
+
+  body.touch .hud-tl {
+    top: 60px;
+    left: calc(12px + env(safe-area-inset-left));
+  }
+
+  body.touch .hud-br {
+    top: auto;
+    right: calc(12px + env(safe-area-inset-right));
+    bottom: calc(200px + env(safe-area-inset-bottom));
+  }
+
+  .stick.aim.idle {
+    left: calc(100% - 190px);
+    top: calc(100% - 290px);
+  }
+
+  .stick.move.idle {
+    left: calc(90px + env(safe-area-inset-left));
+    top: calc(100% - 190px - env(safe-area-inset-bottom));
+  }
+
+  /* 퀵슬롯은 왼쪽 아래로 (오른쪽은 버튼) */
+  body.touch .hud-bc {
+    left: calc(10px + env(safe-area-inset-left));
+    transform: none;
+  }
+
+  body.touch .quickslots {
+    gap: 4px;
+  }
+
+  body.touch .qs {
+    width: 42px;
+    height: 42px;
+  }
+
+  body.touch .qs img {
+    max-width: 34px;
+    max-height: 34px;
+  }
+
+  body.touch .hud-center {
+    bottom: calc(260px + env(safe-area-inset-bottom));
+  }
+}
+
+/* 큰 지도를 펼치면 겹치는 HUD를 치운다 */
+.raid-ui.map-open .hud-tr,
+.raid-ui.map-open .hud-br,
+body.touch .raid-ui.map-open .hud-bl {
+  display: none;
+}
+
+.raid-ui.map-open .tbtns,
+.raid-ui.map-open .stick.idle {
+  opacity: 0.3;
+}
+
+/* ── 터치·작은 화면: 아이템 조작과 레이아웃 ── */
+
+body.touch .item {
+  touch-action: pan-x pan-y;
+  -webkit-touch-callout: none;
+}
+
+body.touch .item img {
+  -webkit-touch-callout: none;
+}
+
+body.touch .grid,
+body.touch .slot {
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.raid-inv .inv-wrap .slot {
+  width: calc(var(--cell, 42px) * 2.3);
+  height: calc(var(--cell, 42px) * 2.3);
+}
+
+.raid-inv .inv-wrap .slot-primary,
+.raid-inv .inv-wrap .slot-secondary {
+  width: calc(var(--cell, 42px) * 4.9);
+}
+
+@media (max-width: 1000px), (max-height: 680px) {
+  .raid-inv {
+    justify-content: flex-start;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .inv-wrap {
+    flex-wrap: wrap;
+    justify-content: center;
+    align-content: flex-start;
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .inv-left,
+  .inv-right {
+    min-width: 0;
+    padding: 8px;
+  }
+
+  .raid-inv .hint {
+    display: none;
+  }
+
+  .raid-inv .panel-title {
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+
+  .inv-footer {
+    margin-top: 6px;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .logo span:not(.logo-duck) {
+    display: none;
+  }
+
+  .tabs {
+    order: 5;
+    flex: 1 0 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tab {
+    flex: none;
+    padding: 8px 12px;
+  }
+
+  .player-info {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .money {
+    padding: 6px 10px;
+    font-size: 14px;
+  }
+
+  .deploy-btn {
+    padding: 9px 16px;
+  }
+
+  .hideout-content {
+    padding: 10px;
+  }
+
+  .two-col {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel {
+    padding: 10px;
+  }
+
+  .stash-scroll {
+    max-height: none;
+    width: auto;
+  }
+
+  .doll {
+    flex-wrap: wrap;
+  }
+
+  .duck-preview {
+    width: 150px;
+    height: 123px;
+  }
+
+  .slot {
+    width: 76px;
+    height: 76px;
+  }
+
+  .slot-primary,
+  .slot-secondary {
+    width: 156px;
+  }
+
+  .offers {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: none;
+  }
+
+  .recipes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quests {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .goal {
+    grid-template-columns: minmax(0, 1fr) 80px auto;
+  }
+
+  .goal > :nth-child(4) {
+    grid-column: 1 / -1;
+  }
+
+  .upgrades {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modal-backdrop {
+    padding: 8px;
+  }
+
+  .modal {
+    max-height: calc(100vh - 16px);
+    padding: 16px 14px;
+  }
+
+  .map-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .loadout {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .modal-buttons {
+    flex-wrap: wrap;
+  }
+
+  .mail-banner {
+    flex-wrap: wrap;
+  }
+
+  .junk-row {
+    flex-wrap: wrap;
+  }
+
+  .title-duck {
+    font-size: 64px;
+  }
+
+  .setting input[type="range"] {
+    width: 150px;
+  }
+}
+
+/* 짧은 가로 화면(휴대폰 가로): 모달이 화면을 넘지 않게 */
+@media (max-height: 500px) {
+  .modal-backdrop {
+    padding: 6px;
+  }
+
+  .modal {
+    max-height: calc(100vh - 12px);
+    padding: 12px 16px;
+  }
+
+  .modal h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+  }
+
+  .map-card p {
+    display: none;
+  }
+
+  .title-screen {
+    align-content: start;
+    padding: 16px 20px;
+  }
+}
+
+/* 작은 화면: 모달 버튼이 항상 보이게 아래에 붙인다 */
+@media (max-width: 760px), (max-height: 500px) {
+  .modal > .modal-buttons {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: 10px;
+    padding: 8px 0 2px;
+    background: #182027;
+    box-shadow: 0 -10px 14px #182027;
+  }
+
+  .tut-steps {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+  }
+
+  .tut-step {
+    padding: 8px 10px;
+  }
+
+  .tut-icon {
+    font-size: 22px;
+  }
+
+  .tut-step p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
+.controls-list kbd {
+  flex: none;
+}
+
+body.touch .controls-list {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
 }

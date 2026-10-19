@@ -61,7 +61,8 @@ function setState(raid, e, state) {
 function goTo(raid, e, x, y) {
   const a = e.ai;
   a.target = { x, y };
-  a.path = raid.pathfinder.find(e.x, e.y, x, y);
+  // 고양이는 문을 못 연다: 열린 문으로만 다닌다
+  a.path = raid.pathfinder.find(e.x, e.y, x, y, 3500, !e.melee);
   a.pathIdx = 0;
   a.repathT = 0.9;
 }
@@ -76,7 +77,7 @@ function followPath(raid, e, speedMul, dt, face = true) {
   }
   if (!node) return false;
   // 닫힌 문은 열고 지나간다
-  if (raid.map.isDoor(node.tx, node.ty) && raid.map.isSolid(node.tx, node.ty) && dist(e.x, e.y, node.x, node.y) < 60) {
+  if (!e.melee && raid.map.isDoor(node.tx, node.ty) && raid.map.isSolid(node.tx, node.ty) && dist(e.x, e.y, node.x, node.y) < 60) {
     raid.openDoorBy(e, node.tx, node.ty);
   }
   const dx = node.x - e.x;
@@ -98,16 +99,27 @@ function randomPointNear(raid, x, y, radius) {
   return null;
 }
 
+/** 고양이가 직선으로 달려들 수 있는지 (몸이 걸리는 장애물 확인) */
+function walkClear(map, x0, y0, x1, y1, r) {
+  const d = Math.hypot(x1 - x0, y1 - y0);
+  const n = Math.ceil(d / 18);
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    if (map.circleBlocked(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r * 0.9)) return false;
+  }
+  return true;
+}
+
 function perceive(raid, e, dt) {
   const a = e.ai;
   const p = raid.player;
   a.sees = false;
-  if (!p.alive) return;
+  if (!p.alive || e.friendly) return;
   const dx = p.x - e.x;
   const dy = p.y - e.y;
   const d = Math.hypot(dx, dy);
   let view = e.def.view;
-  if (raid.def.night && raid.time - p.lastShotT > 0.6) view *= 0.6;
+  if (raid.def.night && !e.def.nightVision && raid.time - p.lastShotT > 0.6) view *= 0.6;
   if (d > view) return;
   const ang = Math.atan2(dy, dx);
   const fovHalf = (e.def.fov / 2) * DEG;
@@ -131,6 +143,7 @@ function perceive(raid, e, dt) {
   if (a.state === "combat") {
     a.lastSeen = { x: p.x, y: p.y, t: raid.time };
   }
+  if (e.melee) a.directClear = d < 420 && walkClear(raid.map, e.x, e.y, p.x, p.y, e.r);
 }
 
 export function enterCombat(raid, e, shout = true) {
@@ -143,7 +156,7 @@ export function enterCombat(raid, e, shout = true) {
     if (shout) raid.say(e, "combat");
     // 근처 동료에게 알림
     for (const other of raid.enemies) {
-      if (other === e || !other.alive || other.ai.state === "combat") continue;
+      if (other === e || !other.alive || other.friendly || other.ai.state === "combat") continue;
       const near = dist(other.x, other.y, e.x, e.y) < 420;
       const sameGroup = (e.boss && other.leader === e) || (e.leader && (other === e.leader || other.leader === e.leader));
       if (near || sameGroup) {
@@ -233,7 +246,8 @@ export function updateAI(raid, e, dt) {
       search(raid, e, dt);
       break;
     case "combat":
-      combat(raid, e, dt);
+      if (e.melee) meleeCombat(raid, e, dt);
+      else combat(raid, e, dt);
       break;
     case "heal":
       a.healT -= dt;
@@ -330,6 +344,65 @@ function search(raid, e, dt) {
     a.lookT = raid.rng.range(0.6, 1.4);
     e.angle += raid.rng.range(-0.8, 0.8);
   }
+}
+
+/** 들고양이: 엎드려 노리다 지그재그로 달려들어 할퀸다 */
+function meleeCombat(raid, e, dt) {
+  const a = e.ai;
+  const p = raid.player;
+  if (!p.alive || e.friendly) {
+    setState(raid, e, "idle");
+    return;
+  }
+  const dx = p.x - e.x;
+  const dy = p.y - e.y;
+  const d = Math.hypot(dx, dy) || 1;
+  a.biteCd = (a.biteCd ?? 0) - dt;
+  if (a.sees) {
+    a.lostT = 0;
+    a.lastSeen = { x: p.x, y: p.y, t: raid.time };
+  } else {
+    a.lostT += dt;
+    if (a.lostT > 2.5) {
+      setState(raid, e, "search");
+      a.searchStarted = false;
+      a.searchLeft = 0;
+      return;
+    }
+  }
+  e.angle = turnToward(e.angle, Math.atan2(dy, dx), 9 * dt);
+  if (a.reactT > 0) {
+    a.reactT -= dt;
+    return;
+  }
+  const bite = e.def.bite;
+  if (d <= e.r + p.r + bite.reach) {
+    if (a.biteCd <= 0) {
+      a.biteCd = bite.cooldown * raid.rng.range(0.85, 1.15);
+      raid.meleeAttack(e, p, bite.damage);
+    }
+    // 할퀸 뒤 옆으로 살짝 돈다
+    raid.moveActor(e, (-dy / d) * a.strafeDir, (dx / d) * a.strafeDir, e.def.speed * 0.35, dt);
+    return;
+  }
+  if (a.sees && a.directClear) {
+    const zig = Math.sin(raid.time * 9 + e.walkPhase) * 0.35;
+    const ax = dx / d;
+    const ay = dy / d;
+    const mx = ax - ay * zig;
+    const my = ay + ax * zig;
+    const ml = Math.hypot(mx, my) || 1;
+    raid.moveActor(e, mx / ml, my / ml, e.def.speed, dt);
+    a.path = null;
+    return;
+  }
+  a.repathT -= dt;
+  const tgt = a.lastSeen ?? p;
+  if (!a.path || a.repathT <= 0) {
+    goTo(raid, e, tgt.x, tgt.y);
+    a.repathT = 0.5;
+  }
+  if (!followPath(raid, e, 1, dt, true)) a.path = null;
 }
 
 function combat(raid, e, dt) {

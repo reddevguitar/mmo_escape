@@ -49,6 +49,8 @@ export class GameMap {
     this.tiles = new Uint8Array(w * h);
     this.floor = new Uint8Array(w * h);
     this.doorOpen = new Uint8Array(w * h);
+    this.locked = new Uint8Array(w * h); // 1 = 열쇠가 필요한 잠긴 문
+    this.lockedRooms = [];
     this.shade = new Uint8Array(w * h);
     this.explored = new Uint8Array(w * h);
     this.buildings = [];
@@ -109,12 +111,30 @@ export class GameMap {
     return BULLET[t] === 1;
   }
 
-  /** AI 경로용: 닫힌 문은 열고 지나갈 수 있으므로 통과 가능 */
-  isWalkableForAI(tx, ty) {
+  /**
+   * AI 경로용: 닫힌 문은 열고 지나갈 수 있으므로 통과 가능 (잠긴 문은 불가).
+   * allowDoors=false면 이미 열린 문만 지나간다 (문을 못 여는 고양이).
+   */
+  isWalkableForAI(tx, ty, allowDoors = true) {
     if (!this.inBounds(tx, ty)) return false;
-    const t = this.tiles[ty * this.w + tx];
-    if (t === T.DOOR) return true;
+    const i = ty * this.w + tx;
+    const t = this.tiles[i];
+    if (t === T.DOOR) {
+      if (this.locked[i]) return false;
+      return allowDoors || this.doorOpen[i] === 1;
+    }
     return SOLID[t] === 0;
+  }
+
+  isLocked(tx, ty) {
+    return this.inBounds(tx, ty) && this.locked[ty * this.w + tx] === 1;
+  }
+
+  unlock(tx, ty) {
+    if (!this.isLocked(tx, ty)) return false;
+    this.locked[this.idx(tx, ty)] = 0;
+    this.version += 1;
+    return true;
   }
 
   isDoor(tx, ty) {
@@ -122,7 +142,7 @@ export class GameMap {
   }
 
   toggleDoor(tx, ty) {
-    if (!this.isDoor(tx, ty)) return false;
+    if (!this.isDoor(tx, ty) || this.isLocked(tx, ty)) return false;
     const i = this.idx(tx, ty);
     this.doorOpen[i] = this.doorOpen[i] ? 0 : 1;
     this.version += 1;
@@ -130,7 +150,7 @@ export class GameMap {
   }
 
   openDoor(tx, ty) {
-    if (!this.isDoor(tx, ty)) return false;
+    if (!this.isDoor(tx, ty) || this.isLocked(tx, ty)) return false;
     const i = this.idx(tx, ty);
     if (this.doorOpen[i]) return false;
     this.doorOpen[i] = 1;
