@@ -213,6 +213,7 @@ class App {
     this.raid.player.hp = maxHp(this.profile);
     this.raidUI = new RaidUI(this, this.raid);
     this.touchControls.reset();
+    this.touchControls.ads = false;
     this.touchControls.layoutMinimap(this.renderer.minimapSize());
     this.raidUI.root.prepend(this.touchControls.el);
     this.uiPresses.clear();
@@ -252,6 +253,7 @@ class App {
   togglePause(force) {
     this.paused = force ?? !this.paused;
     this.touchControls.reset();
+    this.uiPresses.clear();
     if (this.paused) {
       this.setModal(
         pauseModal({

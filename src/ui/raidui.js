@@ -223,6 +223,7 @@ export class RaidUI {
     if (!open) {
       hideTooltip();
       hideMenu();
+      this.inv.clearPending();
       this.inv.cancelDrag();
       this.raid.lootTarget = null;
     }

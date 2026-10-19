@@ -84,7 +84,9 @@ export function resolveAbandonedRaid(profile) {
  */
 export function resolveRaidOnBoot(profile, { swapped = false } = {}) {
   if (!profile.inRaid) return null;
-  // 업데이트 전 버전이 남긴 기록(scav 필드가 없음)도 업데이트로 끊긴 것으로 본다
+  // 업데이트 전 버전이 남긴 기록(scav 필드가 없음)도 업데이트로 끊긴 것으로 본다.
+  // 이전 버전은 레이드 중 설정을 바꾸면 그때까지의 장비를 저장했으므로, 그런 기록은 레이드 도중 상태로 남는다.
+  // 업데이트 한 번에 한해 실종 대신 이쪽을 택한다 (잃는 것보다 덜 나쁘다)
   if (swapped || !("scav" in profile.inRaid)) {
     cancelInterruptedRaid(profile);
     return { kind: "cancelled" };

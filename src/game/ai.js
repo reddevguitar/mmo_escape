@@ -175,7 +175,7 @@ export function enterCombat(raid, e, shout = true) {
 
 export function aiHear(raid, e, x, y, loud) {
   const a = e.ai;
-  if (!e.alive) return;
+  if (!e.alive || e.friendly) return;
   if (a.state === "combat") {
     if (!a.sees && loud > 0.5) a.lastSeen = { x, y, t: raid.time };
     return;
@@ -394,15 +394,20 @@ function meleeCombat(raid, e, dt) {
     const ml = Math.hypot(mx, my) || 1;
     raid.moveActor(e, mx / ml, my / ml, e.def.speed, dt);
     a.path = null;
+    a.repathT = 0; // 시야가 끊기면 바로 길을 찾는다
     return;
   }
+  // 경로 탐색은 시간 간격으로만. 닫힌 문 너머처럼 갈 수 없는 곳이면 더 드물게
   a.repathT -= dt;
-  const tgt = a.lastSeen ?? p;
-  if (!a.path || a.repathT <= 0) {
+  if (a.repathT <= 0) {
+    const tgt = a.lastSeen ?? p;
     goTo(raid, e, tgt.x, tgt.y);
-    a.repathT = 0.5;
+    a.repathT = a.path?.length ? 0.5 : 1.5;
   }
-  if (!followPath(raid, e, 1, dt, true)) a.path = null;
+  if (!followPath(raid, e, 1, dt, true)) {
+    // 더 갈 수 없으면 그 자리에서 서성인다 (창문 너머의 오리를 노려보며)
+    raid.moveActor(e, (-dy / d) * a.strafeDir, (dx / d) * a.strafeDir, e.def.speed * 0.15, dt);
+  }
 }
 
 function combat(raid, e, dt) {
