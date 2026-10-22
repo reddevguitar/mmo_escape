@@ -5,7 +5,7 @@ import { TRADER, SHOP_CATEGORIES } from "../data/trader.js";
 import { QUESTS } from "../data/quests.js";
 import { UPGRADES, UPGRADE_ORDER } from "../data/hideout.js";
 import { h } from "../core/dom.js";
-import { formatMoney, formatWeight } from "../core/util.js";
+import { formatMoney, formatWeight, formatTime } from "../core/util.js";
 import {
   addItem, removeItem, findSpot, placeAt, makeStacks, cloneGrid, countItem, takeItem,
   unloadWeapon, splitStack, sortGrid, slotAccepts, gridWeight, itemWeight, SLOT_TYPES,
@@ -14,6 +14,9 @@ import { playerLevel, xpForLevel, maxHp, traderTier, applyHideoutDims, benchLeve
 import { questState, isQuestComplete, handover, claimQuest, readyQuestCount } from "../systems/quests.js";
 import { RECIPES, recipeStatus, craft } from "../systems/crafting.js";
 import { RECIPE_GROUPS } from "../data/recipes.js";
+import { restockPlan, applyRestock } from "../systems/restock.js";
+import { MAPS, MAP_ORDER } from "../data/maps.js";
+import { ENEMY_TYPES } from "../data/enemies.js";
 import { InventoryUI, hideTooltip, hideMenu } from "./invui.js";
 import { itemIcon } from "./icons.js";
 import { twoStepButton, responsiveCell } from "./widgets.js";
@@ -26,6 +29,7 @@ const TABS = [
   { id: "bench", name: "작업대" },
   { id: "quests", name: "의뢰" },
   { id: "upgrades", name: "시설" },
+  { id: "stats", name: "기록" },
 ];
 
 /** 일괄 판매에서 빼야 하는 아이템: 진행 중인 의뢰, 다음 시설 업그레이드, 제작 재료 */
@@ -82,6 +86,10 @@ export class Hideout {
   show(parent) {
     parent.replaceChildren(this.root);
     this.render();
+    // 보험 장비 도착 시간 갱신
+    this.mailTimer = setInterval(() => {
+      if ((this.profile.mail ?? []).some((it) => it.data?.returnAt)) this.refreshMailBanner();
+    }, 5000);
   }
 
   changed() {
@@ -102,6 +110,7 @@ export class Hideout {
       bench: () => this.renderBench(),
       quests: () => this.renderQuests(),
       upgrades: () => this.renderUpgrades(),
+      stats: () => this.renderStats(),
     };
     const content = (views[this.tab] ?? views.gear)();
     this.root.replaceChildren(this.renderTopbar(), h("div", { class: "hideout-content" }, this.mailBanner(), content));
@@ -111,23 +120,70 @@ export class Hideout {
     if (c2) c2.scrollTop = pageScroll;
   }
 
-  /** 우편함: 창고에 자리가 없어 못 받은 아이템 */
+  /** 우편함: 창고에 자리가 없어 못 받은 아이템, 보험으로 돌아오는 중인 장비 */
   mailBanner() {
     const mail = this.profile.mail ?? [];
-    if (!mail.length) return null;
+    if (!mail.length) return h("div", { class: "mail-slot" });
+    const now = Date.now();
+    const waiting = mail.filter((it) => (it.data?.returnAt ?? 0) > now);
+    const ready = mail.length - waiting.length;
+    const soonest = waiting.length ? Math.min(...waiting.map((it) => it.data.returnAt)) - now : 0;
+    const desc = [
+      ready ? `받을 수 있는 아이템 ${ready}개` : null,
+      waiting.length ? `보험 회수 중 ${waiting.length}개 (가장 빠른 것 ${formatTime(Math.ceil(soonest / 1000))} 후)` : null,
+    ].filter(Boolean);
     return h(
       "div",
-      { class: "mail-banner" },
-      h("span", { class: "mail-icon", text: "📬" }),
-      h("div", {}, h("b", { text: `우편함에 아이템 ${mail.length}개` }), h("small", { text: "창고가 가득 차서 못 받은 보상·전리품입니다. 자리를 만들고 받으세요." })),
-      h("div", { class: "mail-items" }, mail.slice(0, 6).map((it) => h("img", { src: itemIcon(it.id), title: ITEMS[it.id].name }))),
+      { class: "mail-slot" },
+      h(
+        "div",
+        { class: "mail-banner" },
+        h("span", { class: "mail-icon", text: waiting.length && !ready ? "🛡️" : "📬" }),
+        h("div", {}, h("b", { text: `우편함 · ${desc.join(" · ")}` }), h("small", { text: ready ? "창고에 자리를 만들고 받으세요." : "보험 처리된 장비가 곧 도착합니다." })),
+        h(
+          "div",
+          { class: "mail-items" },
+          mail.slice(0, 6).map((it) => h("img", { class: (it.data?.returnAt ?? 0) > now ? "pending" : "", src: itemIcon(it.id), title: ITEMS[it.id].name })),
+        ),
+        h("button", {
+          class: "small-btn",
+          text: "창고로 받기",
+          disabled: !ready,
+          onclick: () => {
+            const r = deliverMail(this.profile);
+            if (r.delivered) this.app.toast(`${r.delivered}개를 창고로 옮겼습니다${r.left ? ` (남은 ${r.left}개)` : ""}`, "good");
+            else this.app.toast("창고에 빈 자리가 없습니다", "warn");
+            this.changed();
+          },
+        }),
+      ),
+    );
+  }
+
+  /** 보험 도착 시간 표시만 갱신 (화면 전체를 다시 그리지 않는다) */
+  refreshMailBanner() {
+    const slot = this.root.querySelector(".mail-slot");
+    if (slot) slot.replaceWith(this.mailBanner());
+  }
+
+  /** 빠른 보급: 장착한 총의 탄약과 붕대를 가방에 채운다 */
+  restockRow() {
+    const plan = restockPlan(this.profile);
+    if (!plan.lines.length) return h("div", { class: "restock done" }, h("span", { text: "✔ 탄약·붕대 넉넉함" }));
+    const what = plan.lines.map((l) => `${ITEMS[l.id].short} ${l.fromStash + l.buy}`).join(" · ");
+    return h(
+      "div",
+      { class: "restock" },
+      h("div", {}, h("b", { text: "빠른 보급" }), h("small", { text: `${what} (창고에서 먼저, 모자라면 구매)` })),
       h("button", {
-        class: "small-btn",
-        text: "창고로 받기",
+        class: `buy ${this.profile.money < plan.total ? "poor" : ""}`,
+        text: plan.total ? `채우기 ${formatMoney(plan.total)}` : "채우기 (무료)",
         onclick: () => {
-          const r = deliverMail(this.profile);
-          if (r.delivered) this.app.toast(`${r.delivered}개를 창고로 옮겼습니다${r.left ? ` (남은 ${r.left}개)` : ""}`, "good");
-          else this.app.toast("창고에 빈 자리가 없습니다", "warn");
+          const r = applyRestock(this.profile);
+          if (r.ok) {
+            audio.reload(1);
+            this.app.toast(`보급 완료${r.cost ? ` (-${formatMoney(r.cost)})` : ""}`, "good");
+          } else this.app.toast(r.msg, "warn");
           this.changed();
         },
       }),
@@ -200,6 +256,7 @@ export class Hideout {
       "section",
       { class: "panel character" },
       h("div", { class: "panel-title" }, h("span", { text: "내 오리" }), h("small", { text: "장비는 레이드에서 죽으면 잃습니다" })),
+      this.restockRow(),
       h(
         "div",
         { class: "doll" },
@@ -739,7 +796,57 @@ export class Hideout {
     );
   }
 
+  // ── 기록 ───────────────────────────────────────────
+
+  renderStats() {
+    const s = this.profile.stats;
+    const rate = s.raids ? Math.round((s.extracts / s.raids) * 100) : 0;
+    const big = (label, value, sub) => h("div", { class: "stat-big" }, h("small", { text: label }), h("b", { text: value }), sub ? h("span", { text: sub }) : null);
+    const kills = Object.entries(s.killsByType ?? {}).sort((a, b) => b[1] - a[1]);
+    return h(
+      "div",
+      { class: "two-col" },
+      h(
+        "section",
+        { class: "panel" },
+        h("div", { class: "panel-title" }, h("span", { text: "📊 기록" }), h("small", { text: this.profile.name })),
+        h(
+          "div",
+          { class: "stat-grid" },
+          big("출격", `${s.raids}회`, s.scavRaids ? `떠돌이 ${s.scavRaids}회 포함` : null),
+          big("생존율", `${rate}%`, `탈출 ${s.extracts} · 사망 ${s.deaths}`),
+          big("처치", `${s.kills}`, null),
+          big("최고 반출", formatMoney(s.bestLoot ?? 0), "한 번에 들고 나온 가치"),
+          big("누적 반출", formatMoney(s.totalLoot ?? 0), null),
+          big("최장 생존", formatTime(s.longestRaid ?? 0), null),
+          big("문 따기", `${s.unlocks ?? 0}`, null),
+          big("제작", `${s.crafted ?? 0}`, null),
+          big("보험 회수", `${s.insuranceReturns ?? 0}`, null),
+        ),
+      ),
+      h(
+        "section",
+        { class: "panel" },
+        h("div", { class: "panel-title" }, h("span", { text: "지역별" })),
+        h(
+          "div",
+          { class: "map-rows" },
+          MAP_ORDER.map((id) => {
+            const m = s.mapStats?.[id] ?? { raids: 0, extracts: 0 };
+            const r = m.raids ? Math.round((m.extracts / m.raids) * 100) : 0;
+            return h("div", { class: "map-row" }, h("span", { text: MAPS[id].name }), h("div", { class: "goal-bar" }, h("i", { style: { width: `${r}%` } })), h("small", { text: m.raids ? `${m.extracts}/${m.raids} 탈출` : "기록 없음" }));
+          }),
+        ),
+        h("div", { class: "panel-title", style: { marginTop: "16px" } }, h("span", { text: "처치한 적" })),
+        kills.length
+          ? h("div", { class: "kill-list" }, kills.map(([t, n]) => h("span", { text: `${ENEMY_TYPES[t]?.name ?? t} x${n}` })))
+          : h("p", { class: "hint", text: "아직 처치 기록이 없습니다." }),
+      ),
+    );
+  }
+
   destroy() {
+    clearInterval(this.mailTimer);
     hideMenu();
     this.inv.destroy();
   }

@@ -70,19 +70,20 @@ export class Renderer {
     this.cssH = 1;
     this.mouse = { x: 0, y: 0 };
     this.touch = false; // 터치 조작이면 조금 더 가까이 본다 (작은 화면에서 오리가 너무 작지 않게)
+    this.lowFx = false; // 저사양: 고해상도 화면에서도 1배율로 그리고 안개를 더 거칠게
     this.time = 0;
     this.visPoly = [];
     this.resize();
   }
 
   resize() {
-    this.dpr = Math.min(globalThis.devicePixelRatio || 1, 2);
+    this.dpr = Math.min(globalThis.devicePixelRatio || 1, this.lowFx ? 1 : 2);
     this.cssW = this.canvas.clientWidth || globalThis.innerWidth;
     this.cssH = this.canvas.clientHeight || globalThis.innerHeight;
     this.canvas.width = Math.round(this.cssW * this.dpr);
     this.canvas.height = Math.round(this.cssH * this.dpr);
     // 안개는 절반 해상도로 그려 확대한다 (가장자리가 부드러워지고 비용도 1/4)
-    this.fogScale = 0.5;
+    this.fogScale = this.lowFx ? 0.35 : 0.5;
     this.fog.width = Math.max(1, Math.round(this.canvas.width * this.fogScale));
     this.fog.height = Math.max(1, Math.round(this.canvas.height * this.fogScale));
     const [vw, vh] = this.touch ? [TOUCH_VIEW_W, TOUCH_VIEW_H] : [VIEW_W, VIEW_H];

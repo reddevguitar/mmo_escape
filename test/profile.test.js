@@ -8,6 +8,8 @@ import { deliverMail } from "../src/systems/profile.js";
 import { countItem } from "../src/systems/inventory.js";
 import { craft, recipeStatus, RECIPES } from "../src/systems/crafting.js";
 import { makeScavLoadout } from "../src/systems/scav.js";
+import { insuranceCost, insurableItems, INSURANCE_RETURN_MS } from "../src/systems/insurance.js";
+import { restockPlan, applyRestock } from "../src/systems/restock.js";
 import { Rng } from "../src/core/rng.js";
 import { RECIPE_MAP } from "../src/data/recipes.js";
 import { penChance, computeHit } from "../src/systems/combat.js";
@@ -241,4 +243,93 @@ test("관통 확률과 피해 계산", () => {
   const vest = makeItem("vest_heavy");
   const blocked = computeHit(ITEMS["9mm"], 1, vest, 0.99);
   assert.ok(!blocked.penetrated && blocked.damage < 10 && blocked.durLoss > 0);
+});
+
+test("보험: 죽으면 보험 든 장비가 확률로 비워진 채 늦게 우편함에 온다", () => {
+  const p = newProfile();
+  const bag = p.equip.backpack;
+  const pistol = p.equip.secondary;
+  assert.equal(insurableItems(p).length, 2);
+  assert.ok(insuranceCost(pistol) >= 100);
+  p.inRaid = { mapId: "farm", at: 1, scav: false, insured: [bag.uid, pistol.uid], insureCost: 500 };
+  const now = 1_000_000;
+  const dead = { status: "dead", cause: "x", mapId: "farm", kills: [], searched: 0, unlocks: 0, xp: { total: 0 }, startValue: 0, endValue: 0, time: 30 };
+  const summary = applyRaidResult(p, dead, { rand: () => 0, now });
+  assert.equal(p.equip.secondary, null, "장비는 잃는다");
+  assert.equal(summary.insurance.returned, 2);
+  assert.equal(p.mail.length, 2);
+  const back = p.mail.find((it) => it.id === "p9");
+  assert.equal(back.data.mag, 0, "총은 탄 없이");
+  assert.equal(p.mail.find((it) => it.id === "bag_sling").data.grid.items.length, 0, "가방은 빈 채로");
+  // 도착 전에는 받을 수 없다
+  let r = deliverMail(p, now + 1000);
+  assert.equal(r.delivered, 0);
+  assert.equal(r.waiting, 2);
+  r = deliverMail(p, now + INSURANCE_RETURN_MS + 1);
+  assert.equal(r.delivered, 2);
+  assert.ok(p.stash.items.some((it) => it.id === "p9" && it.data.returnAt === undefined));
+  assert.equal(p.stats.insuranceReturns, 2);
+});
+
+test("보험: 운이 나쁘면 돌아오지 않고, 탈출하면 보험은 쓰이지 않는다", () => {
+  const p = newProfile();
+  p.inRaid = { mapId: "farm", at: 1, scav: false, insured: [p.equip.secondary.uid] };
+  const base = { cause: "x", mapId: "farm", kills: [], searched: 0, unlocks: 0, xp: { total: 0 }, startValue: 0, endValue: 0, time: 30 };
+  const lost = applyRaidResult(p, { ...base, status: "dead" }, { rand: () => 0.99 });
+  assert.equal(lost.insurance.returned, 0);
+  assert.equal(p.mail.length, 0);
+  const q = newProfile();
+  q.inRaid = { mapId: "farm", at: 1, scav: false, insured: [q.equip.secondary.uid] };
+  const ok = applyRaidResult(q, { ...base, status: "extracted" }, { rand: () => 0 });
+  assert.equal(ok.insurance, null);
+  assert.ok(q.equip.secondary);
+});
+
+test("업데이트로 취소된 레이드는 보험료를 돌려준다", () => {
+  const p = newProfile();
+  p.money = 1000;
+  p.inRaid = { mapId: "farm", at: 1, scav: false, insured: [], insureCost: 700 };
+  cancelInterruptedRaid(p);
+  assert.equal(p.money, 1700);
+});
+
+test("빠른 보급: 창고에서 먼저 꺼내고 모자란 것만 사서 탄창까지 채운다", () => {
+  const p = newProfile();
+  p.equip.secondary.data.mag = 3;
+  // 가방의 9mm 36발을 비우고, 창고에는 9mm 60발
+  p.equip.backpack.data.grid.items = p.equip.backpack.data.grid.items.filter((it) => it.id !== "9mm");
+  const plan = restockPlan(p);
+  const ammo = plan.lines.find((l) => l.id === "9mm");
+  assert.equal(ammo.need, 9 + 24);
+  assert.equal(ammo.fromStash, 33);
+  assert.equal(ammo.buy, 0);
+  const money = p.money;
+  const stashAmmo = countItem([p.stash], "9mm");
+  const r = applyRestock(p);
+  assert.ok(r.ok, r.msg);
+  assert.equal(p.money, money, "창고에 있어서 공짜");
+  assert.equal(p.equip.secondary.data.mag, 12, "탄창이 가득");
+  assert.equal(countItem([p.equip.backpack.data.grid, p.pockets], "9mm"), 24);
+  assert.equal(countItem([p.stash], "9mm"), stashAmmo - 33);
+  assert.equal(restockPlan(p).lines.length, 0, "다시 누르면 할 일 없음");
+  // 창고에 없으면 산다
+  const q = newProfile();
+  q.stash.items = [];
+  q.equip.backpack.data.grid.items = [];
+  q.pockets.items = [];
+  const r2 = applyRestock(q);
+  assert.ok(r2.ok, r2.msg);
+  assert.ok(r2.cost > 0 && q.money === 30000 - r2.cost);
+  assert.equal(countItem([q.pockets, q.equip.backpack.data.grid], "bandage"), 1);
+});
+
+test("빠른 보급: 가방에 자리가 없으면 아무것도 바뀌지 않는다", () => {
+  const p = newProfile();
+  p.equip.backpack = null;
+  p.pockets.items = [];
+  for (let i = 0; i < 4; i++) addItem(p.pockets, makeItem("watch"));
+  const before = JSON.stringify({ stash: p.stash, equip: p.equip, money: p.money });
+  const r = applyRestock(p);
+  assert.equal(r.ok, false);
+  assert.equal(JSON.stringify({ stash: p.stash, equip: p.equip, money: p.money }), before);
 });

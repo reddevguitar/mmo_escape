@@ -38,8 +38,8 @@ export function newProfile(name = "신입 오리") {
     stash: makeGrid(10, UPGRADES.stash.levels[0].stashH, { kind: "stash" }),
     hideout: { stash: 0, secure: 0, gym: 0, bench: 0 },
     quests: {},
-    stats: { raids: 0, extracts: 0, deaths: 0, kills: 0, killsByType: {}, bestLoot: 0, scavRaids: 0, unlocks: 0, crafted: 0 },
-    settings: { volume: 0.7, damageNumbers: true, duckColor: "yellow", soundMarkers: true },
+    stats: { raids: 0, extracts: 0, deaths: 0, kills: 0, killsByType: {}, bestLoot: 0, scavRaids: 0, unlocks: 0, crafted: 0, insuranceReturns: 0, totalLoot: 0, longestRaid: 0, mapStats: {} },
+    settings: { volume: 0.7, damageNumbers: true, duckColor: "yellow", soundMarkers: true, lowFx: null },
     seenTutorial: false,
     inRaid: null,
     lastResult: null,
@@ -109,15 +109,23 @@ export function sendToMail(profile, items) {
   for (const item of items) if (item && item.count > 0) profile.mail.push(item);
 }
 
-export function deliverMail(profile) {
+/** 받을 수 있는 우편을 창고로. 보험으로 돌아오는 중인 것(data.returnAt이 미래)은 기다린다 */
+export function deliverMail(profile, now = Date.now()) {
   const left = [];
   let delivered = 0;
+  let waiting = 0;
   for (const item of profile.mail ?? []) {
+    if ((item.data?.returnAt ?? 0) > now) {
+      waiting += 1;
+      left.push(item);
+      continue;
+    }
+    if (item.data?.returnAt) delete item.data.returnAt;
     if (addItem(profile.stash, item)) delivered += 1;
     else left.push(item);
   }
   profile.mail = left;
-  return { delivered, left: left.length };
+  return { delivered, left: left.length, waiting };
 }
 
 /** 시설 레벨에 맞게 창고/보안 컨테이너 크기를 맞춘다 (커지기만 함) */

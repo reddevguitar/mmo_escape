@@ -77,6 +77,7 @@ class App {
       }[leftover.kind];
     }
     if (this.profile) audio.setVolume(this.profile.settings.volume);
+    this.applyQuality();
 
     // 업데이트 전에 은신처에 있었다면 타이틀을 건너뛰고 같은 탭으로
     if (this.profile && boot.screen && boot.screen !== "title") this.showHideout(boot.tab);
@@ -96,6 +97,34 @@ class App {
 
   save() {
     if (this.profile) saveProfile(this.profile);
+  }
+
+  /** 저사양 모드: 설정이 켜져 있거나(true) 자동(null)으로 느리다고 판정됐을 때 */
+  applyQuality() {
+    const low = this.profile?.settings.lowFx === true;
+    if (this.renderer.lowFx === low) return;
+    this.renderer.lowFx = low;
+    this.renderer.resize();
+  }
+
+  /** 자동 모드에서 레이드 첫 몇 초 동안 프레임이 계속 느리면 저사양 모드를 켠다 */
+  watchFps(dt) {
+    const s = this.profile.settings;
+    if (s.lowFx !== null && s.lowFx !== undefined) return;
+    const w = (this.fpsWatch ??= { t: 0, slow: 0, n: 0 });
+    if (w.done) return;
+    w.t += dt;
+    if (w.t < 2) return; // 시작 직후 로딩 끊김은 무시
+    w.n += 1;
+    if (dt > 1 / 38) w.slow += 1;
+    if (w.t > 8) {
+      w.done = true;
+      if (w.slow / w.n > 0.5) {
+        s.lowFx = true;
+        this.applyQuality();
+        this.toast("화면이 버벅여 저사양 모드를 켰습니다 (메뉴에서 끌 수 있어요)", "warn");
+      }
+    }
   }
 
   /** 마지막으로 쓴 입력 장치에 맞춰 터치 조작 화면을 켜고 끈다 */
@@ -187,23 +216,26 @@ class App {
       deployModal({
         profile: this.profile,
         onClose: () => this.setModal(null),
-        onDeploy: (mapId, mode) => {
+        onDeploy: (mapId, mode, { insure = [], insureCost = 0 } = {}) => {
           this.setModal(null);
-          this.startRaid(mapId, { scav: mode === "scav" });
+          this.startRaid(mapId, { scav: mode === "scav", insure, insureCost });
         },
       }),
     );
   }
 
-  startRaid(mapId, { scav = false } = {}) {
+  startRaid(mapId, { scav = false, insure = [], insureCost = 0 } = {}) {
     audio.init();
     this.hideout?.destroy();
     this.hideout = null;
     const now = Date.now();
-    this.profile.inRaid = { mapId, at: now, scav, prevScavReadyAt: this.profile.scavReadyAt ?? 0 };
+    this.profile.inRaid = { mapId, at: now, scav, prevScavReadyAt: this.profile.scavReadyAt ?? 0, insured: scav ? [] : insure, insureCost: scav ? 0 : insureCost };
     if (scav) this.profile.scavReadyAt = now + SCAV_COOLDOWN_MS;
+    else this.profile.money -= insureCost;
     this.save();
     this.pendingEnd = null;
+    this.fpsWatch = null;
+    this.applyQuality();
     this.raid = new Raid(this.profile, mapId, {
       loadout: scav ? makeScavLoadout(new Rng(now >>> 0)) : null,
       onEnd: (result) => {
@@ -275,6 +307,10 @@ class App {
           onToggleSoundMarkers: (on) => {
             this.profile.settings.soundMarkers = on;
           },
+          onToggleLowFx: (on) => {
+            this.profile.settings.lowFx = on;
+            this.applyQuality();
+          },
         }),
       );
     } else {
@@ -305,6 +341,7 @@ class App {
     }
 
     let touch = null;
+    if (!this.paused) this.watchFps(dt);
     if (!this.paused) {
       if (input.wasPressed("Tab") && raid.player.alive) ui.toggleInventory();
       if (input.wasPressed("KeyM")) this.showMap = !this.showMap;

@@ -7,6 +7,7 @@ import { h } from "../core/dom.js";
 import { formatMoney, formatTime } from "../core/util.js";
 import { playerLevel } from "../systems/profile.js";
 import { scavCooldownLeft } from "../systems/scav.js";
+import { insurableItems, insuranceCost, INSURANCE_RETURN_CHANCE, INSURANCE_RETURN_MS } from "../systems/insurance.js";
 import { itemIcon } from "./icons.js";
 import { audio } from "../game/audio.js";
 import { twoStepButton, touchMode } from "./widgets.js";
@@ -154,9 +155,55 @@ export function deployModal({ profile, onDeploy, onClose }) {
     );
   };
   renderCards();
+  // 보험: 장착한 장비마다 선택. 기본은 지난번 선택(없으면 전부)
+  const insurable = insurableItems(profile);
+  const insureSet = new Set(insurable.filter((it) => profile.settings.insureAll !== false).map((it) => it.uid));
+  const insureCostOf = () => insurable.filter((it) => insureSet.has(it.uid)).reduce((s, it) => s + insuranceCost(it), 0);
+  const insureTotal = h("b");
+  const insureRows = h("div", { class: "insure-rows" });
+  const renderInsure = () => {
+    insureRows.replaceChildren(
+      ...insurable.map((it) => {
+        const box = h("input", { type: "checkbox" });
+        box.checked = insureSet.has(it.uid);
+        box.addEventListener("change", () => {
+          if (box.checked) insureSet.add(it.uid);
+          else insureSet.delete(it.uid);
+          renderInsure();
+        });
+        return h("label", { class: `insure-row ${box.checked ? "on" : ""}` }, box, h("img", { src: itemIcon(it.id) }), h("span", { text: ITEMS[it.id].name }), h("small", { text: formatMoney(insuranceCost(it)) }));
+      }),
+    );
+    const cost = insureCostOf();
+    insureTotal.textContent = formatMoney(cost);
+    insureTotal.classList.toggle("poor", cost > profile.money);
+  };
+  renderInsure();
+  const insureBox = insurable.length
+    ? h(
+        "div",
+        { class: "insure" },
+        h(
+          "div",
+          { class: "insure-head" },
+          h("span", { text: "🛡️ 장비 보험" }),
+          h("small", { text: `죽으면 보험 든 장비가 ${Math.round(INSURANCE_RETURN_CHANCE * 100)}% 확률로 약 ${Math.round(INSURANCE_RETURN_MS / 60000)}분 뒤 우편함으로 돌아옵니다 (총은 탄 없이, 가방은 빈 채로)` }),
+        ),
+        insureRows,
+        h("div", { class: "insure-total" }, "보험료 ", insureTotal),
+      )
+    : null;
+
   deployBtn.onclick = () => {
     if (mode === "scav" && scavCooldownLeft(profile) > 0) return;
-    onDeploy(selected, mode);
+    const insure = mode === "pmc" ? insurable.filter((it) => insureSet.has(it.uid)).map((it) => it.uid) : [];
+    const cost = mode === "pmc" ? insureCostOf() : 0;
+    if (cost > profile.money) {
+      insureTotal.textContent = `${formatMoney(cost)} — 돈이 부족합니다`;
+      return;
+    }
+    if (mode === "pmc") profile.settings.insureAll = insure.length > 0 || !insurable.length ? true : false;
+    onDeploy(selected, mode, { insure, insureCost: cost });
   };
 
   const slotName = (it) => (it ? ITEMS[it.id].name : "—");
@@ -173,6 +220,7 @@ export function deployModal({ profile, onDeploy, onClose }) {
       h("div", {}, h("small", { text: "가방" }), h("b", { text: slotName(eq.backpack) })),
     ),
     warnings.length ? h("ul", { class: "warnings" }, warnings.map((w) => h("li", { text: `⚠ ${w}` }))) : h("p", { class: "ok-line", text: "✔ 준비 완료" }),
+    insureBox,
     h("p", { class: "hint", text: "레이드 중 페이지를 닫거나 새로고침하면 실종(사망) 처리됩니다." }),
   );
   const cooldownText = h("b");
@@ -287,6 +335,14 @@ export function resultsScreen({ result, summary, onContinue }) {
           )
         : null,
       summary.mailed ? h("div", { class: "mail-note", text: `📬 창고에 자리가 없어 ${summary.mailed}개는 우편함에 있습니다.` }) : null,
+      summary.insurance
+        ? h("div", {
+            class: "mail-note",
+            text: summary.insurance.returned
+              ? `🛡️ 보험 처리: ${summary.insurance.items.map((id) => ITEMS[id].name).join(", ")} — 약 ${Math.round(INSURANCE_RETURN_MS / 60000)}분 뒤 우편함으로 돌아옵니다.`
+              : "🛡️ 보험 든 장비를 누군가 챙겨 갔습니다. 이번엔 돌아오지 않습니다.",
+          })
+        : null,
       h(
         "div",
         { class: "xp-box" },
@@ -306,7 +362,7 @@ function cell(label, value) {
   return h("div", { class: "rcell" }, h("small", { text: label }), h("b", { text: value }));
 }
 
-export function pauseModal({ profile, scav = false, onResume, onAbandon, onVolume, onToggleNumbers, onToggleSoundMarkers }) {
+export function pauseModal({ profile, scav = false, onResume, onAbandon, onVolume, onToggleNumbers, onToggleSoundMarkers, onToggleLowFx }) {
   const vol = h("input", { type: "range", min: 0, max: 1, step: 0.05, value: String(profile.settings.volume) });
   vol.addEventListener("input", () => onVolume(Number(vol.value)));
   const nums = h("input", { type: "checkbox" });
@@ -315,6 +371,9 @@ export function pauseModal({ profile, scav = false, onResume, onAbandon, onVolum
   const marks = h("input", { type: "checkbox" });
   marks.checked = profile.settings.soundMarkers !== false;
   marks.addEventListener("change", () => onToggleSoundMarkers?.(marks.checked));
+  const lowfx = h("input", { type: "checkbox" });
+  lowfx.checked = profile.settings.lowFx === true;
+  lowfx.addEventListener("change", () => onToggleLowFx?.(lowfx.checked));
   return h(
     "div",
     { class: "modal-backdrop" },
@@ -325,6 +384,7 @@ export function pauseModal({ profile, scav = false, onResume, onAbandon, onVolum
       h("label", { class: "setting" }, h("span", { text: "음량" }), vol),
       h("label", { class: "setting" }, h("span", { text: "피해 숫자 표시" }), nums),
       h("label", { class: "setting" }, h("span", { text: "소리 방향 표시" }), marks),
+      h("label", { class: "setting" }, h("span", { text: "저사양 모드 (휴대폰이 버벅일 때)" }), lowfx),
       controlsList(),
       h(
         "div",
